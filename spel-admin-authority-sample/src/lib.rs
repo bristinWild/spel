@@ -33,24 +33,8 @@ use serde::{Deserialize, Serialize};
 use spel_admin_authority::{AdminError, AdminState};
 use spel_framework::prelude::*;
 
-/// The config PDA account data.
-#[account_type]
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
-pub struct AdminConfig {
-    /// The admin authority state.
-    pub admin_state: AdminState,
-    /// A configurable value gated behind admin authority.
-    pub config_value: u64,
-}
-
-impl AdminConfig {
-    pub fn new(admin_key: [u8; 32]) -> Self {
-        Self {
-            admin_state: AdminState::new(admin_key),
-            config_value: 0,
-        }
-    }
-}
+// Re-export AdminConfig from the library
+pub use spel_admin_authority::AdminConfig;
 
 /// Convert AdminError to SpelError for use in instruction handlers.
 fn admin_err(e: AdminError) -> spel_framework::error::SpelError {
@@ -89,9 +73,10 @@ mod admin_authority_sample {
 
     /// Update the config value. Admin-only.
     ///
-    /// Reads the admin state from the config PDA and verifies the signer
-    /// is the current admin before allowing the update.
+    /// The #[require_admin(config)] annotation automatically injects
+    /// the admin authority check before the handler body runs.
     #[instruction]
+    #[require_admin(config)]
     pub fn set_config_value(
         #[account(mut, pda = literal("config"))]
         config: AccountWithMetadata,

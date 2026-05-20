@@ -110,6 +110,40 @@ impl AdminState {
     }
 }
 
+/// The standard config PDA account data for admin-authority programs.
+///
+/// Store this in your program's config PDA (pda = literal("config")).
+/// The `admin_state` field controls access to privileged instructions.
+///
+/// ```rust,ignore
+/// #[account_type]
+/// #[derive(BorshSerialize, BorshDeserialize)]
+/// pub struct MyProgramConfig {
+///     pub admin_state: AdminState,
+///     pub my_value: u64,
+/// }
+/// ```
+///
+/// Or use `AdminConfig` directly if you only need the admin state + a u64 value.
+#[derive(Debug, Clone, PartialEq, borsh::BorshSerialize, borsh::BorshDeserialize,
+         serde::Serialize, serde::Deserialize)]
+pub struct AdminConfig {
+    /// The admin authority state.
+    pub admin_state: AdminState,
+    /// A configurable value gated behind admin authority.
+    pub config_value: u64,
+}
+
+impl AdminConfig {
+    /// Create a new AdminConfig with the given admin key and zero config value.
+    pub fn new(admin_key: [u8; 32]) -> Self {
+        Self {
+            admin_state: AdminState::new(admin_key),
+            config_value: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
