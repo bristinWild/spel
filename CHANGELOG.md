@@ -1,3 +1,20 @@
+## v0.4.0 (2026-05-22)
+
+### ✨ Features
+--target logos-module — Qt/QML Basecamp module scaffold from IDL (#209) (555a516)
+
+### 🐛 Fixes
+suppress spurious r0vm ImageID error in make build (#205) (e8ff9cb)
+LEZ compat workflow silently fails — fix Cargo.lock extraction and sed pattern (#201) (3d63907)
+use --owner flag in init-e2e-test.sh (was --account) (#206) (9d8ec46)
+test coverage and doc improvements for validity window methods (#203) (6178728)
+scan path-dep crates in generate_idl! macro + support qualified attribute form (issue #176) (#180) (8a8f775)
+resolve account seeds from CLI args in pda command (#194) (32307ee)
+
+### 📦 Other
+- test: add integration test for macro validity window pass-through (#202) (5adad8f)
+- docs(README): add troubleshooting section for ring/riscv32 guest build failure (issue #165) (#181) (8968ecd)
+
 # Changelog
 
 ## v0.3.0 (2026-05-13)
