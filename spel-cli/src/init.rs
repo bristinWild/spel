@@ -84,7 +84,7 @@ ui/
     let spel_ref_ffi = match (spel_tag, spel_rev) {
         (Some(t), _) => format!("tag = \"{}\"", t),
         (_, Some(r)) => format!("rev = \"{}\"", r),
-        _ => "tag = \"v0.3.0\"".to_string(),
+        _ => "tag = \"v0.4.0\"".to_string(),
     };
     write_file(root, &format!("{snake_name}_ffi/Cargo.toml"), &format!(r#"[package]
 name = "{snake_name}_ffi"
