@@ -15,7 +15,11 @@ use std::fmt::Write;
 use crate::util::*;
 
 /// Generate C FFI wrapper source code from an IDL.
-pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
+///
+/// `idl_json` is the raw JSON that was parsed into `idl`; it is embedded as a
+/// static string in the generated code so `{prefix}_decode_account` can call
+/// `spel_framework_core::decode::decode_account_data_try_all` at runtime.
+pub fn generate_ffi(idl: &SpelIdl, idl_json: &str) -> Result<String, String> {
     let mut out = String::new();
     let prefix = snake_case(&idl.name);
     let local_enum = pascal_case(&idl.name) + "Instruction";
@@ -46,9 +50,17 @@ pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
     writeln!(out, "use sha2::{{Sha256, Digest}};").unwrap();
     writeln!(out, "use nssa::{{AccountId, ProgramId, PublicTransaction}};").unwrap();
     writeln!(out, "use nssa::public_transaction::{{Message, WitnessSet}};").unwrap();
+    writeln!(out, "use nssa::program::Program;").unwrap();
     writeln!(out, "use nssa_core::program::PdaSeed;").unwrap();
     writeln!(out, "use sequencer_service_rpc::RpcClient as _;").unwrap();
     writeln!(out, "use wallet::WalletCore;").unwrap();
+
+    // Embed IDL JSON for runtime decode (spel_framework_core::decode::decode_account_data_try_all).
+    // Use a normal string literal with escaping instead of a raw literal to avoid the r#"..."#
+    // delimiter collision if the JSON ever contains a matching sequence.
+    writeln!(out).unwrap();
+    let escaped = idl_json.replace('\\', "\\\\").replace('"', "\\\"");
+    writeln!(out, "static PROGRAM_IDL_JSON: &str = \"{}\";", escaped).unwrap();
 
     // Import or generate instruction type
     if let Some(ref itype) = idl.instruction_type {
@@ -193,6 +205,25 @@ pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
+    // parse_bytes32 — same inputs as parse_account_id but returns the raw [u8; 32].
+    // Used for IDL fields typed [u8; 32] (PDA seed bytes, keys stored as raw arrays).
+    writeln!(out, "fn parse_bytes32(s: &str) -> Result<[u8; 32], String> {{").unwrap();
+    writeln!(out, "    let raw = s;").unwrap();
+    writeln!(out, "    let s = s.strip_prefix(\"Public/\").or_else(|| s.strip_prefix(\"Private/\")).unwrap_or(s);").unwrap();
+    writeln!(out, "    let s = s.trim_start_matches(\"0x\");").unwrap();
+    writeln!(out, "    if s.len() == 64 {{").unwrap();
+    writeln!(out, "        let bytes = hex::decode(s).map_err(|e| format!(\"invalid hex: {{}}\", e))?;").unwrap();
+    writeln!(out, "        let mut arr = [0u8; 32]; arr.copy_from_slice(&bytes);").unwrap();
+    writeln!(out, "        return Ok(arr);").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    if let Ok(id) = s.parse::<AccountId>() {{").unwrap();
+    writeln!(out, "        let mut arr = [0u8; 32]; arr.copy_from_slice(id.as_ref());").unwrap();
+    writeln!(out, "        return Ok(arr);").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    Err(format!(\"invalid [u8; 32]: {{}}\", raw))").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+
     // Shared async runtime — created once per process, reused across all FFI calls.
     writeln!(out, "static ASYNC_RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();").unwrap();
     writeln!(out, "fn get_runtime() -> &'static tokio::runtime::Runtime {{").unwrap();
@@ -209,6 +240,9 @@ pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
     writeln!(out, "fn init_wallet(v: &Value) -> Result<WalletCore, String> {{").unwrap();
     writeln!(out, "    let _guard = WALLET_INIT_LOCK.lock().map_err(|_| \"wallet lock poisoned\".to_string())?;").unwrap();
     writeln!(out, "    let wallet_path = v[\"wallet_path\"].as_str().ok_or(\"missing required field: wallet_path\")?;").unwrap();
+    writeln!(out, "    if wallet_path.is_empty() || wallet_path.contains('\\0') {{").unwrap();
+    writeln!(out, "        return Err(\"wallet_path must be a non-empty path without null bytes\".into());").unwrap();
+    writeln!(out, "    }}").unwrap();
     writeln!(out, "    let sequencer_url = v[\"sequencer_url\"].as_str().ok_or(\"missing required field: sequencer_url\")?;").unwrap();
     writeln!(out, "    std::env::set_var(\"NSSA_WALLET_HOME_DIR\", wallet_path);").unwrap();
     writeln!(out, "    std::env::set_var(\"NSSA_SEQUENCER_URL\", sequencer_url);").unwrap();
@@ -257,9 +291,22 @@ pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
         for acc in &ix.accounts {
             let name = rust_ident(&acc.name);
             if acc.rest {
-                writeln!(out, "    let {name}: Vec<AccountId> = v[\"{}\"].as_array()", acc.name).unwrap();
-                writeln!(out, "        .ok_or(\"missing {}\")?", acc.name).unwrap();
-                writeln!(out, "        .iter().map(|a| parse_account_id(a.as_str().ok_or(\"expected string\")?)).collect::<Result<Vec<_>,_>>()?;").unwrap();
+                // If there's a Vec<[u8;32]> arg, derive rest accounts from it when the
+                // JSON field is absent — the UI sends keys only once (as the instruction arg).
+                let src_arg = ix.args.iter().find(|a| is_vec_bytes32(&a.type_));
+                if let Some(src) = src_arg {
+                    let src_name = rust_ident(&src.name);
+                    writeln!(out, "    let {name}: Vec<AccountId> = if v[\"{}\"].is_array() {{", acc.name).unwrap();
+                    writeln!(out, "        v[\"{}\"].as_array().unwrap()", acc.name).unwrap();
+                    writeln!(out, "            .iter().map(|a| parse_account_id(a.as_str().ok_or(\"expected string\")?)).collect::<Result<Vec<_>,_>>()?").unwrap();
+                    writeln!(out, "    }} else {{").unwrap();
+                    writeln!(out, "        {src_name}.iter().map(|m| AccountId::new(*m)).collect()").unwrap();
+                    writeln!(out, "    }};").unwrap();
+                } else {
+                    writeln!(out, "    let {name}: Vec<AccountId> = v[\"{}\"].as_array()", acc.name).unwrap();
+                    writeln!(out, "        .ok_or(\"missing {}\")?", acc.name).unwrap();
+                    writeln!(out, "        .iter().map(|a| parse_account_id(a.as_str().ok_or(\"expected string\")?)).collect::<Result<Vec<_>,_>>()?;").unwrap();
+                }
             } else if acc.pda.is_none() {
                 writeln!(out, "    let {name} = parse_account_id(v[\"{}\"].as_str().ok_or(\"missing {}\")?)?;",
                     acc.name, acc.name).unwrap();
@@ -314,7 +361,9 @@ pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
         writeln!(out).unwrap();
 
         // Build account_ids vec (non-rest accounts first, then rest)
-        writeln!(out, "    let mut account_ids: Vec<AccountId> = vec![").unwrap();
+        let has_rest = ix.accounts.iter().any(|a| a.rest);
+        let account_ids_binding = if has_rest { "let mut" } else { "let" };
+        writeln!(out, "    {account_ids_binding} account_ids: Vec<AccountId> = vec![").unwrap();
         for acc in ix.accounts.iter().filter(|a| !a.rest) {
             writeln!(out, "        {},", rust_ident(&acc.name)).unwrap();
         }
@@ -360,9 +409,12 @@ pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
         writeln!(out, "            .map_err(|e| format!(\"message: {{:?}}\", e))?;").unwrap();
         writeln!(out, "        let witness_set = WitnessSet::for_message(&message, &signing_keys);").unwrap();
         writeln!(out, "        let tx = PublicTransaction::new(message, witness_set);").unwrap();
-        writeln!(out, "        wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await").unwrap();
-        writeln!(out, "            .map_err(|e| format!(\"submit: {{}}\", e))").unwrap();
-        writeln!(out, "            .map(|r| hex::encode(r.0))").unwrap();
+        writeln!(out, "        let raw = wallet.sequencer_client.send_transaction(common::transaction::NSSATransaction::Public(tx)).await").unwrap();
+        writeln!(out, "            .map_err(|e| format!(\"submit: {{}}\", e))?;").unwrap();
+        writeln!(out, "        let tx_hash_hex = hex::encode(raw.0);").unwrap();
+        writeln!(out, "        let poller = wallet::poller::TxPoller::new(wallet.config(), wallet.sequencer_client.clone());").unwrap();
+        writeln!(out, "        poller.poll_tx(raw).await.map_err(|e| format!(\"confirm: {{}}\", e))?;").unwrap();
+        writeln!(out, "        Ok::<String, String>(tx_hash_hex)").unwrap();
         writeln!(out, "    }})?;").unwrap();
         writeln!(out).unwrap();
         writeln!(out, "    Ok(json!({{\"success\": true, \"tx_hash\": tx_hash}}).to_string())").unwrap();
@@ -380,9 +432,219 @@ pub fn generate_ffi(idl: &SpelIdl) -> Result<String, String> {
     writeln!(out, "pub extern \"C\" fn {prefix}_version() -> *mut c_char {{").unwrap();
     writeln!(out, "    to_cstring(\"{}\".to_string())", idl.version).unwrap();
     writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    // program_id: locate the guest binary and compute its ProgramId via nssa::program::Program.
+    // Tries the standard project-relative path first, then walks up ancestor directories
+    // so it works whether the process cwd is the project root or a build subdirectory.
+    writeln!(out, "#[no_mangle]").unwrap();
+    writeln!(out, "pub extern \"C\" fn {prefix}_program_id() -> *mut c_char {{").unwrap();
+    writeln!(out, "    let rel = \"methods/guest/target/riscv32im-risc0-zkvm-elf/docker/{prefix}.bin\";").unwrap();
+    writeln!(out, "    let data = std::env::current_dir().ok().and_then(|cwd| {{").unwrap();
+    writeln!(out, "        cwd.ancestors().take(6).find_map(|dir| std::fs::read(dir.join(rel)).ok())").unwrap();
+    writeln!(out, "    }});").unwrap();
+    writeln!(out, "    let data = match data {{ Some(d) => d, None => return std::ptr::null_mut() }};").unwrap();
+    writeln!(out, "    let program = match Program::new(data) {{ Ok(p) => p, Err(_) => return std::ptr::null_mut() }};").unwrap();
+    writeln!(out, "    let id = program.id();").unwrap();
+    writeln!(out, "    let hex: String = id.iter().flat_map(|w| w.to_le_bytes()).map(|b| format!(\"{{:02x}}\", b)).collect();").unwrap();
+    out.push_str("    let json = json!({\"program_id_hex\": hex}).to_string();\n");
+    writeln!(out, "    CString::new(json).map(|cs| cs.into_raw()).unwrap_or(std::ptr::null_mut())").unwrap();
+    writeln!(out, "}}").unwrap();
+
+    // Wallet connectivity helpers (always generated, not per-IDL)
+    writeln!(out).unwrap();
+    writeln!(out, "/// FFI: ping the sequencer to verify wallet + network connectivity.").unwrap();
+    writeln!(out, "#[no_mangle]").unwrap();
+    writeln!(out, "pub extern \"C\" fn {prefix}_check_connection(args_json: *const c_char) -> *mut c_char {{").unwrap();
+    writeln!(out, "    let args = match cstr_to_str(args_json) {{ Ok(s) => s, Err(e) => return error_json(&e) }};").unwrap();
+    writeln!(out, "    ffi_call(move || {prefix}_check_connection_impl(args))").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "fn {prefix}_check_connection_impl(args: &str) -> Result<String, String> {{").unwrap();
+    writeln!(out, "    let v: Value = serde_json::from_str(args).map_err(|e| format!(\"invalid JSON: {{}}\", e))?;").unwrap();
+    writeln!(out, "    let sequencer_url = v[\"sequencer_url\"].as_str().ok_or(\"missing sequencer_url\")?.to_string();").unwrap();
+    writeln!(out, "    let wallet = init_wallet(&v)?;").unwrap();
+    writeln!(out, "    let rt = get_runtime();").unwrap();
+    writeln!(out, "    rt.block_on(async {{").unwrap();
+    writeln!(out, "        wallet.get_accounts_nonces(vec![]).await.map_err(|e| format!(\"ping: {{}}\", e))").unwrap();
+    writeln!(out, "    }})?;").unwrap();
+    writeln!(out, "    Ok(json!({{\"success\": true, \"status\": \"ok\", \"sequencer_url\": sequencer_url}}).to_string())").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "/// FFI: inspect an account — returns data size, hex preview, and signing-key presence.").unwrap();
+    writeln!(out, "#[no_mangle]").unwrap();
+    writeln!(out, "pub extern \"C\" fn {prefix}_inspect_account(args_json: *const c_char) -> *mut c_char {{").unwrap();
+    writeln!(out, "    let args = match cstr_to_str(args_json) {{ Ok(s) => s, Err(e) => return error_json(&e) }};").unwrap();
+    writeln!(out, "    ffi_call(move || {prefix}_inspect_account_impl(args))").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "fn {prefix}_inspect_account_impl(args: &str) -> Result<String, String> {{").unwrap();
+    writeln!(out, "    let v: Value = serde_json::from_str(args).map_err(|e| format!(\"invalid JSON: {{}}\", e))?;").unwrap();
+    writeln!(out, "    let wallet = init_wallet(&v)?;").unwrap();
+    writeln!(out, "    let account_id = parse_account_id(v[\"account_id\"].as_str().ok_or(\"missing account_id\")?)?;").unwrap();
+    writeln!(out, "    let rt = get_runtime();").unwrap();
+    writeln!(out, "    let account = rt.block_on(async {{").unwrap();
+    writeln!(out, "        wallet.sequencer_client.get_account(account_id).await.map_err(|e| format!(\"get_account: {{}}\", e))").unwrap();
+    writeln!(out, "    }})?;").unwrap();
+    writeln!(out, "    let has_key = wallet.storage().user_data.get_pub_account_signing_key(account_id).is_some();").unwrap();
+    writeln!(out, "    let data_len = account.data.len();").unwrap();
+    writeln!(out, "    let preview_len = data_len.min(32);").unwrap();
+    writeln!(out, "    let data_preview = hex::encode(&account.data[..preview_len]);").unwrap();
+    // program_owner classification
+    writeln!(out, "    let owner_bytes: Vec<u8> = account.program_owner.iter().flat_map(|w| w.to_le_bytes()).collect();").unwrap();
+    writeln!(out, "    let program_owner_hex = hex::encode(&owner_bytes);").unwrap();
+    writeln!(out, "    let is_uninitialized = account.program_owner == [0u32; 8];").unwrap();
+    writeln!(out, "    let maybe_program_id = v[\"program_id_hex\"].as_str()").unwrap();
+    writeln!(out, "        .filter(|s| !s.is_empty())").unwrap();
+    writeln!(out, "        .map(|s| parse_program_id_hex(s))").unwrap();
+    writeln!(out, "        .transpose()?;").unwrap();
+    writeln!(out, "    let status = if is_uninitialized {{ \"uninitialized\" }}").unwrap();
+    writeln!(out, "        else if maybe_program_id.map_or(false, |pid| account.program_owner == pid) {{ \"owned\" }}").unwrap();
+    writeln!(out, "        else {{ \"foreign\" }};").unwrap();
+    writeln!(out, "    Ok(json!({{").unwrap();
+    writeln!(out, "        \"success\": true, \"data_len\": data_len, \"data_preview\": data_preview,").unwrap();
+    writeln!(out, "        \"has_signing_key\": has_key, \"program_owner\": program_owner_hex, \"status\": status").unwrap();
+    writeln!(out, "    }}).to_string())").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+
+    // Wallet CLI subprocess helpers
+    // TEMPORARY: until LEZ exposes account listing/creation via the wallet library API,
+    // these call the `wallet` CLI binary directly.  Remove once the native API exists.
+    writeln!(out, "/// FFI: list accounts in the wallet — delegates to `wallet account list --json`.").unwrap();
+    writeln!(out, "/// TEMPORARY: uses `wallet` CLI subprocess until the library API is available.").unwrap();
+    writeln!(out, "#[no_mangle]").unwrap();
+    writeln!(out, "pub extern \"C\" fn {prefix}_list_accounts(args_json: *const c_char) -> *mut c_char {{").unwrap();
+    writeln!(out, "    let args = match cstr_to_str(args_json) {{ Ok(s) => s, Err(e) => return error_json(&e) }};").unwrap();
+    writeln!(out, "    ffi_call(move || {prefix}_list_accounts_impl(args))").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "fn {prefix}_list_accounts_impl(args: &str) -> Result<String, String> {{").unwrap();
+    writeln!(out, "    let v: Value = serde_json::from_str(args).map_err(|e| format!(\"invalid JSON: {{}}\", e))?;").unwrap();
+    writeln!(out, "    let wallet_path = v[\"wallet_path\"].as_str().ok_or(\"missing wallet_path\")?;").unwrap();
+    writeln!(out, "    if wallet_path.is_empty() || wallet_path.contains('\\0') {{").unwrap();
+    writeln!(out, "        return Err(\"wallet_path must be a non-empty path without null bytes\".into());").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    let output = std::process::Command::new(\"wallet\")").unwrap();
+    writeln!(out, "        .args([\"account\", \"list\"])").unwrap();
+    writeln!(out, "        .env(\"NSSA_WALLET_HOME_DIR\", wallet_path)").unwrap();
+    writeln!(out, "        .output()").unwrap();
+    writeln!(out, "        .map_err(|e| format!(\"wallet CLI: {{}}\", e))?;").unwrap();
+    writeln!(out, "    if !output.status.success() {{").unwrap();
+    writeln!(out, "        let stderr = String::from_utf8_lossy(&output.stderr);").unwrap();
+    writeln!(out, "        return Err(format!(\"wallet account list: {{}}\", stderr.trim()));").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    let stdout = String::from_utf8_lossy(&output.stdout);").unwrap();
+    writeln!(out, "    // Output format per line: `{{path}} {{Public|Private}}/{{id}} [optional-tag]`").unwrap();
+    writeln!(out, "    let raw: Vec<(String, String, String)> = stdout.lines()").unwrap();
+    writeln!(out, "        .filter_map(|line| {{").unwrap();
+    writeln!(out, "            let id = line.split_whitespace()").unwrap();
+    writeln!(out, "                .find(|s| s.starts_with(\"Public/\") || s.starts_with(\"Private/\"))?;").unwrap();
+    writeln!(out, "            let label = line.split_whitespace()").unwrap();
+    writeln!(out, "                .find(|s| s.starts_with('[') && s.ends_with(']'))").unwrap();
+    writeln!(out, "                .map(|s| s.trim_matches(|c: char| c == '[' || c == ']').to_string())").unwrap();
+    writeln!(out, "                .unwrap_or_default();").unwrap();
+    writeln!(out, "            let path = line.trim_end()").unwrap();
+    writeln!(out, "                .split(id).next().unwrap_or(\"\").trim().to_string();").unwrap();
+    writeln!(out, "            Some((id.to_string(), label, path))").unwrap();
+    writeln!(out, "        }})").unwrap();
+    writeln!(out, "        .collect();").unwrap();
+    writeln!(out).unwrap();
+    // Classify accounts via sequencer if available
+    writeln!(out, "    // Classify each account (owner → uninitialized / owned / foreign).").unwrap();
+    writeln!(out, "    // Falls back to status \"unknown\" when sequencer is unreachable.").unwrap();
+    writeln!(out, "    let maybe_wallet = init_wallet(&v).ok();").unwrap();
+    writeln!(out, "    let maybe_program_id = v[\"program_id_hex\"].as_str()").unwrap();
+    writeln!(out, "        .filter(|s| !s.is_empty())").unwrap();
+    writeln!(out, "        .and_then(|s| parse_program_id_hex(s).ok());").unwrap();
+    writeln!(out, "    let rt = get_runtime();").unwrap();
+    writeln!(out, "    let accounts: Vec<serde_json::Value> = rt.block_on(async {{").unwrap();
+    writeln!(out, "        let mut result = Vec::new();").unwrap();
+    writeln!(out, "        for (id, label, path) in &raw {{").unwrap();
+    writeln!(out, "            // Strip \"Public/\" or \"Private/\" prefix before parsing").unwrap();
+    writeln!(out, "            let raw_id = id.split('/').last().unwrap_or(id.as_str());").unwrap();
+    writeln!(out, "            let status = if let (Some(wallet), Ok(aid)) = (&maybe_wallet, parse_account_id(raw_id)) {{").unwrap();
+    writeln!(out, "                match wallet.sequencer_client.get_account(aid).await {{").unwrap();
+    writeln!(out, "                    Ok(account) => {{").unwrap();
+    writeln!(out, "                        let is_uninit = account.program_owner == [0u32; 8];").unwrap();
+    writeln!(out, "                        if is_uninit {{ \"uninitialized\" }}").unwrap();
+    writeln!(out, "                        else if maybe_program_id.map_or(false, |pid| account.program_owner == pid) {{ \"owned\" }}").unwrap();
+    writeln!(out, "                        else {{ \"foreign\" }}").unwrap();
+    writeln!(out, "                    }}").unwrap();
+    writeln!(out, "                    Err(_) => \"unknown\",").unwrap();
+    writeln!(out, "                }}").unwrap();
+    writeln!(out, "            }} else {{ \"unknown\" }};").unwrap();
+    writeln!(out, "            result.push(json!({{\"id\": id, \"label\": label, \"path\": path, \"status\": status}}));").unwrap();
+    writeln!(out, "        }}").unwrap();
+    writeln!(out, "        result").unwrap();
+    writeln!(out, "    }});").unwrap();
+    writeln!(out, "    Ok(json!({{\"success\": true, \"accounts\": accounts}}).to_string())").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "/// FFI: create a new public account — delegates to `wallet account new public`.").unwrap();
+    writeln!(out, "/// TEMPORARY: uses `wallet` CLI subprocess until the library API is available.").unwrap();
+    writeln!(out, "#[no_mangle]").unwrap();
+    writeln!(out, "pub extern \"C\" fn {prefix}_create_account(args_json: *const c_char) -> *mut c_char {{").unwrap();
+    writeln!(out, "    let args = match cstr_to_str(args_json) {{ Ok(s) => s, Err(e) => return error_json(&e) }};").unwrap();
+    writeln!(out, "    ffi_call(move || {prefix}_create_account_impl(args))").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "fn {prefix}_create_account_impl(args: &str) -> Result<String, String> {{").unwrap();
+    writeln!(out, "    let v: Value = serde_json::from_str(args).map_err(|e| format!(\"invalid JSON: {{}}\", e))?;").unwrap();
+    writeln!(out, "    let wallet_path = v[\"wallet_path\"].as_str().ok_or(\"missing wallet_path\")?;").unwrap();
+    writeln!(out, "    if wallet_path.is_empty() || wallet_path.contains('\\0') {{").unwrap();
+    writeln!(out, "        return Err(\"wallet_path must be a non-empty path without null bytes\".into());").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    let mut cmd = std::process::Command::new(\"wallet\");").unwrap();
+    writeln!(out, "    cmd.args([\"account\", \"new\", \"public\"]);").unwrap();
+    writeln!(out, "    if let Some(label) = v[\"label\"].as_str().filter(|s| !s.is_empty()) {{").unwrap();
+    writeln!(out, "        cmd.args([\"--label\", label]);").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    let output = cmd.env(\"NSSA_WALLET_HOME_DIR\", wallet_path)").unwrap();
+    writeln!(out, "        .output()").unwrap();
+    writeln!(out, "        .map_err(|e| format!(\"wallet CLI: {{}}\", e))?;").unwrap();
+    writeln!(out, "    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();").unwrap();
+    writeln!(out, "    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();").unwrap();
+    writeln!(out, "    if !output.status.success() {{").unwrap();
+    writeln!(out, "        return Err(format!(\"wallet account new: {{}}\", if stderr.is_empty() {{ &stdout }} else {{ &stderr }}));").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    // stdout from `wallet account new public` is the new account ID").unwrap();
+    writeln!(out, "    Ok(json!({{\"success\": true, \"account_id\": stdout}}).to_string())").unwrap();
+    writeln!(out, "}}").unwrap();
+
+    // decode_account: fetches raw data and tries each IDL account type via spel_framework_core::decode
+    writeln!(out).unwrap();
+    writeln!(out, "/// FFI: decode an account's data against each known IDL type, returning the first match.").unwrap();
+    writeln!(out, "#[no_mangle]").unwrap();
+    writeln!(out, "pub extern \"C\" fn {prefix}_decode_account(args_json: *const c_char) -> *mut c_char {{").unwrap();
+    writeln!(out, "    let args = match cstr_to_str(args_json) {{ Ok(s) => s, Err(e) => return error_json(&e) }};").unwrap();
+    writeln!(out, "    ffi_call(move || {prefix}_decode_account_impl(args))").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "fn {prefix}_decode_account_impl(args: &str) -> Result<String, String> {{").unwrap();
+    writeln!(out, "    let v: Value = serde_json::from_str(args).map_err(|e| format!(\"invalid JSON: {{}}\", e))?;").unwrap();
+    writeln!(out, "    let wallet = init_wallet(&v)?;").unwrap();
+    writeln!(out, "    let account_id = parse_account_id(v[\"account_id\"].as_str().ok_or(\"missing account_id\")?)?;").unwrap();
+    writeln!(out, "    let rt = get_runtime();").unwrap();
+    writeln!(out, "    let account = rt.block_on(async {{").unwrap();
+    writeln!(out, "        wallet.sequencer_client.get_account(account_id).await.map_err(|e| format!(\"get_account: {{}}\", e))").unwrap();
+    writeln!(out, "    }})?;").unwrap();
+    writeln!(out, "    if account.data.is_empty() {{").unwrap();
+    writeln!(out, "        return Ok(json!({{\"success\": true, \"status\": \"uninitialized\", \"type\": null, \"fields\": null}}).to_string());").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "    let idl: spel_framework_core::idl::SpelIdl = serde_json::from_str(PROGRAM_IDL_JSON)").unwrap();
+    writeln!(out, "        .map_err(|e| format!(\"IDL parse: {{}}\", e))?;").unwrap();
+    writeln!(out, "    match spel_framework_core::decode::decode_account_data_try_all(&account.data, &idl) {{").unwrap();
+    writeln!(out, "        Some((type_name, fields)) => Ok(json!({{\"success\": true, \"type\": type_name, \"fields\": fields}}).to_string()),").unwrap();
+    writeln!(out, "        None => Ok(json!({{\"success\": true, \"type\": null, \"fields\": null, \"raw_hex\": hex::encode(&account.data)}}).to_string()),").unwrap();
+    writeln!(out, "    }}").unwrap();
+    writeln!(out, "}}").unwrap();
 
     // PDA compute helpers
     out.push_str(&generate_pda_helpers(idl));
+
+    // Named IDL types (enums, structs) referenced by account fields
+    generate_defined_types(idl, &mut out);
 
     // Account state structs (BorshDeserialize)
     generate_account_types(idl, &mut out);
@@ -535,57 +797,66 @@ pub fn generate_pda_helpers(idl: &SpelIdl) -> String {
     out
 }
 
-/// Emit a JSON field expression for a given IDL type and field name.
-///
-/// Returns the Rust expression to use inside `serde_json::json!({...})`.
-/// `u128`/`i128` must be stringified; `[u8; N]` becomes hex; everything else is direct.
-fn idl_type_to_json_field(ty: &IdlType, field_name: &str) -> String {
+/// Returns true if the type (or any nested type) contains a `Defined` reference
+/// that cannot be resolved in `known_types`.
+fn has_unresolvable_defined_type(ty: &IdlType, known_types: &std::collections::HashSet<&str>) -> bool {
     use spel_framework_core::idl::IdlType;
     match ty {
-        IdlType::Primitive(p) => match p.as_str() {
-            "u128" | "i128" => format!("state.{field_name}.to_string()"),
-            "account_id" | "AccountId" | "[u8; 32]" | "[u8;32]" => format!("hex::encode(&state.{field_name})"),
-            "ProgramId" | "[u32; 8]" | "[u32;8]" => format!(
-                "hex::encode(state.{field_name}.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<_>>())"
-            ),
-            _ => format!("state.{field_name}"),
-        },
-        IdlType::Array { array: (elem, _) } => {
-            // Byte arrays → hex; other arrays fallback to direct (serde_json handles Vec-like)
-            match elem.as_ref() {
-                IdlType::Primitive(p) if p == "u8" => format!("hex::encode(&state.{field_name})"),
-                _ => format!("state.{field_name}"),
-            }
-        }
-        _ => format!("state.{field_name}"),
-    }
-}
-
-/// Returns true if the type (or any nested type) contains a `Defined` reference.
-/// Such types have no generated Rust definition in the FFI output, so fetch
-/// generation must be skipped for account structs that contain them.
-fn has_defined_type(ty: &IdlType) -> bool {
-    use spel_framework_core::idl::IdlType;
-    match ty {
-        IdlType::Defined { .. } => true,
-        IdlType::Vec { vec } => has_defined_type(vec),
-        IdlType::Option { option } => has_defined_type(option),
-        IdlType::Array { array: (elem, _) } => has_defined_type(elem),
+        IdlType::Defined { defined } => !known_types.contains(defined.as_str()),
+        IdlType::Vec { vec } => has_unresolvable_defined_type(vec, known_types),
+        IdlType::Option { option } => has_unresolvable_defined_type(option, known_types),
+        IdlType::Array { array: (elem, _) } => has_unresolvable_defined_type(elem, known_types),
         _ => false,
     }
 }
 
 /// Returns true if `acc_name` (snake_case) qualifies for fetch function generation:
 /// it must have a matching struct entry in `idl.accounts` with non-empty fields and
-/// no `Defined` field types. Used by both `generate_account_fetch_functions` and
-/// `generate_header` to keep their filtering logic in sync.
+/// all `Defined` field types resolvable in `idl.types`.
 fn is_fetch_eligible(idl: &SpelIdl, acc_name: &str) -> bool {
+    let known: std::collections::HashSet<&str> = idl.types.iter().map(|t| t.name.as_str()).collect();
     match idl.accounts.iter().find(|at| snake_case(&at.name) == acc_name) {
         None => false,
         Some(t) => {
             t.type_.kind == "struct"
                 && !t.type_.fields.is_empty()
-                && !t.type_.fields.iter().any(|f| has_defined_type(&f.type_))
+                && !t.type_.fields.iter().any(|f| has_unresolvable_defined_type(&f.type_, &known))
+        }
+    }
+}
+
+/// Emit Borsh-deserializable type definitions for all named types in `idl.types`.
+/// These cover enums and structs referenced via `Defined { defined }` from account fields.
+pub fn generate_defined_types(idl: &SpelIdl, out: &mut String) {
+    for def in &idl.types {
+        if def.name.is_empty() { continue; }
+        let name = &def.name;
+        writeln!(out).unwrap();
+        writeln!(out, "/// Auto-generated Borsh type: `{name}`.").unwrap();
+        writeln!(out, "#[allow(dead_code)]").unwrap();
+        writeln!(out, "#[derive(borsh::BorshDeserialize)]").unwrap();
+        if def.kind == "enum" {
+            writeln!(out, "enum {name} {{").unwrap();
+            for variant in &def.variants {
+                if variant.fields.is_empty() {
+                    writeln!(out, "    {},", variant.name).unwrap();
+                } else {
+                    let fields: String = variant.fields.iter()
+                        .map(|f| format!("{}: {}", rust_ident(&f.name), idl_type_to_borsh_rust(&f.type_)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    writeln!(out, "    {} {{ {fields} }},", variant.name).unwrap();
+                }
+            }
+            writeln!(out, "}}").unwrap();
+        } else if def.kind == "struct" {
+            writeln!(out, "struct {name} {{").unwrap();
+            for field in &def.fields {
+                let fname = rust_ident(&field.name);
+                let ftype = idl_type_to_borsh_rust(&field.type_);
+                writeln!(out, "    pub {fname}: {ftype},").unwrap();
+            }
+            writeln!(out, "}}").unwrap();
         }
     }
 }
@@ -596,7 +867,7 @@ fn idl_type_to_borsh_rust(ty: &IdlType) -> String {
     match ty {
         IdlType::Primitive(p) => match p.as_str() {
             "account_id" | "AccountId" | "[u8; 32]" | "[u8;32]" => "[u8; 32]".to_string(),
-            "ProgramId" | "[u32; 8]" | "[u32;8]" => "[u32; 8]".to_string(),
+            "program_id" | "ProgramId" | "[u32; 8]" | "[u32;8]" => "[u32; 8]".to_string(),
             "string" => "String".to_string(),
             s => s.to_string(),
         },
@@ -609,65 +880,47 @@ fn idl_type_to_borsh_rust(ty: &IdlType) -> String {
     }
 }
 
-/// For each unique account type referenced as a PDA in any instruction, emit a
-/// BorshDeserialize struct if the account type is found in `idl.accounts`.
+/// For each entry in `idl.accounts` that qualifies for fetch, emit a BorshDeserialize struct.
+/// Mirrors the iteration in `generate_account_fetch_functions` so every emitted fetch function
+/// has a corresponding state struct.
 pub fn generate_account_types(idl: &SpelIdl, out: &mut String) {
-    use std::collections::HashSet;
-    let mut seen: HashSet<String> = HashSet::new();
+    for type_def in &idl.accounts {
+        let acc_name = snake_case(&type_def.name);
+        if !is_fetch_eligible(idl, &acc_name) { continue; }
 
-    for ix in &idl.instructions {
-        for acc in &ix.accounts {
-            if acc.pda.is_none() { continue; }
-            let acc_name = snake_case(&acc.name);
-            if !seen.insert(acc_name.clone()) { continue; }
-
-            if !is_fetch_eligible(idl, &acc_name) { continue; }
-            let type_def = idl.accounts.iter().find(|at| snake_case(&at.name) == acc_name).unwrap();
-
-            let pascal_name = pascal_case(&acc_name);
-            writeln!(out).unwrap();
-            writeln!(out, "/// Auto-generated Borsh state struct for `{acc_name}` account.").unwrap();
-            writeln!(out, "#[derive(borsh::BorshDeserialize)]").unwrap();
-            writeln!(out, "struct {pascal_name}State {{").unwrap();
-            for field in &type_def.type_.fields {
-                let fname = rust_ident(&field.name);
-                let ftype = idl_type_to_borsh_rust(&field.type_);
-                writeln!(out, "    pub {fname}: {ftype},").unwrap();
-            }
-            writeln!(out, "}}").unwrap();
+        let pascal_name = pascal_case(&acc_name);
+        writeln!(out).unwrap();
+        writeln!(out, "/// Auto-generated Borsh state struct for `{acc_name}` account.").unwrap();
+        writeln!(out, "#[derive(borsh::BorshDeserialize)]").unwrap();
+        writeln!(out, "struct {pascal_name}State {{").unwrap();
+        for field in &type_def.type_.fields {
+            let fname = rust_ident(&field.name);
+            let ftype = idl_type_to_borsh_rust(&field.type_);
+            writeln!(out, "    pub {fname}: {ftype},").unwrap();
         }
+        writeln!(out, "}}").unwrap();
     }
 }
 
 /// Generate `extern "C" fn {prefix}_fetch_{account}(args_json) -> *mut c_char` for each
-/// unique PDA-backed account that has a known type definition.
+/// unique PDA account (keyed by instruction parameter name). Decoding uses
+/// `decode_account_data_try_all` so there is no type-name coupling.
 pub fn generate_account_fetch_functions(idl: &SpelIdl, prefix: &str, out: &mut String) {
     use std::collections::HashSet;
     let mut seen: HashSet<String> = HashSet::new();
 
     for ix in &idl.instructions {
         for acc in &ix.accounts {
-            let pda = match &acc.pda {
-                Some(p) => p,
-                None => continue,
-            };
+            let Some(pda) = &acc.pda else { continue };
             let acc_name = snake_case(&acc.name);
             if !seen.insert(acc_name.clone()) { continue; }
 
-            // Only generate fetch functions when we have qualifying type information.
-            if !is_fetch_eligible(idl, &acc_name) { continue; }
-            let type_def = idl.accounts.iter().find(|at| snake_case(&at.name) == acc_name).unwrap();
-
-            let pascal_name = pascal_case(&acc_name);
             let fn_name = format!("{prefix}_fetch_{acc_name}");
 
-            // Build a type map for seed arg lookups
             let param_type_map: std::collections::HashMap<String, String> = ix.args.iter()
                 .map(|a| (rust_ident(&a.name), idl_type_to_rust(&a.type_)))
                 .collect();
 
-            // Determine which seeds need parse lines and which go into compute_pda args
-            // (same logic as the instruction path, but using args["name"] not a bare variable)
             let mut seed_parse_lines: Vec<String> = Vec::new();
             let mut pda_seeds_code: Vec<String> = Vec::new();
 
@@ -679,10 +932,10 @@ pub fn generate_account_fetch_functions(idl: &SpelIdl, prefix: &str, out: &mut S
                     IdlSeed::Arg { path } => {
                         let pname = rust_ident(path);
                         let arg_ty = param_type_map.get(&pname).map(|s| s.as_str()).unwrap_or("").to_string();
-                        // Parse line: read from args JSON
-                        let parse_expr = idl_type_to_json_parse(&ix.args.iter().find(|a| rust_ident(&a.name) == pname)
-                            .map(|a| a.type_.clone())
-                            .unwrap_or(spel_framework_core::idl::IdlType::Primitive("String".to_string())),
+                        let parse_expr = idl_type_to_json_parse(
+                            &ix.args.iter().find(|a| rust_ident(&a.name) == pname)
+                                .map(|a| a.type_.clone())
+                                .unwrap_or(spel_framework_core::idl::IdlType::Primitive("String".to_string())),
                             &format!("args[\"{path}\"]"));
                         seed_parse_lines.push(format!("        let {pname} = {parse_expr};"));
                         // Seed bytes expression: pre-bind types that can't be safely
@@ -709,7 +962,6 @@ pub fn generate_account_fetch_functions(idl: &SpelIdl, prefix: &str, out: &mut S
                     }
                     IdlSeed::Account { path } => {
                         let pname = rust_ident(path);
-                        // Account seeds: parse as AccountId from JSON
                         seed_parse_lines.push(format!(
                             "        let {pname} = parse_account_id(args[\"{path}\"].as_str().ok_or(\"missing {path}\")?)?;"
                         ));
@@ -719,7 +971,7 @@ pub fn generate_account_fetch_functions(idl: &SpelIdl, prefix: &str, out: &mut S
             }
 
             writeln!(out).unwrap();
-            writeln!(out, "/// FFI: fetch and decode `{acc_name}` account state.").unwrap();
+            writeln!(out, "/// FFI: fetch and decode `{acc_name}` PDA account.").unwrap();
             writeln!(out, "#[no_mangle]").unwrap();
             writeln!(out, "pub extern \"C\" fn {fn_name}(args_json: *const c_char) -> *mut c_char {{").unwrap();
             writeln!(out, "    ffi_call(move || {{").unwrap();
@@ -732,38 +984,24 @@ pub fn generate_account_fetch_functions(idl: &SpelIdl, prefix: &str, out: &mut S
             writeln!(out, "    let args: serde_json::Value = serde_json::from_str(args_str).map_err(|e| format!(\"invalid JSON: {{e}}\"))?;").unwrap();
             writeln!(out, "    let program_id = parse_program_id_hex(args[\"program_id_hex\"].as_str().ok_or(\"missing program_id_hex\")?)?;").unwrap();
             writeln!(out, "    let wallet = init_wallet(&args)?;").unwrap();
-
-            // Emit seed parse lines (arg and account seeds)
             for line in &seed_parse_lines {
                 writeln!(out, "{line}").unwrap();
             }
-
-            // Compute PDA — use program_id so PDAs are program-specific.
             writeln!(out, "    let pda = compute_pda_with_program(&program_id, &[").unwrap();
             for seed_line in &pda_seeds_code {
                 writeln!(out, "{seed_line}").unwrap();
             }
             writeln!(out, "    ])?;").unwrap();
-
-            // Fetch and decode
             writeln!(out, "    let rt = get_runtime();").unwrap();
             writeln!(out, "    let account = rt.block_on(async {{").unwrap();
             writeln!(out, "        wallet.sequencer_client.get_account(pda).await.map_err(|e| format!(\"get_account: {{e}}\"))").unwrap();
             writeln!(out, "    }})?;").unwrap();
-            writeln!(out, "    let state = <{pascal_name}State as borsh::BorshDeserialize>::try_from_slice(&account.data).map_err(|e| format!(\"decode: {{e}}\"))?;").unwrap();
-
-            // Build JSON response
-            writeln!(out, "    Ok(serde_json::json!({{").unwrap();
-            writeln!(out, "        \"success\": true,").unwrap();
-            writeln!(out, "        \"state\": {{").unwrap();
-            for field in &type_def.type_.fields {
-                let json_key = &field.name;
-                let field_ident = rust_ident(&field.name);
-                let expr = idl_type_to_json_field(&field.type_, &field_ident);
-                writeln!(out, "            \"{json_key}\": {expr},").unwrap();
-            }
-            writeln!(out, "        }}").unwrap();
-            writeln!(out, "    }}).to_string())").unwrap();
+            writeln!(out, "    let idl: spel_framework_core::idl::SpelIdl = serde_json::from_str(PROGRAM_IDL_JSON).map_err(|e| format!(\"IDL: {{e}}\"))?;").unwrap();
+            writeln!(out, "    let state = match spel_framework_core::decode::decode_account_data_try_all(&account.data, &idl) {{").unwrap();
+            writeln!(out, "        Some((_type_name, fields)) => fields,").unwrap();
+            writeln!(out, "        None => serde_json::Value::Object(serde_json::Map::new()),").unwrap();
+            writeln!(out, "    }};").unwrap();
+            writeln!(out, "    Ok(serde_json::json!({{ \"success\": true, \"state\": state }}).to_string())").unwrap();
             writeln!(out, "}}").unwrap();
         }
     }
@@ -791,32 +1029,33 @@ pub fn generate_header(idl: &SpelIdl) -> Result<String, String> {
         writeln!(out).unwrap();
     }
 
-    // Fetch function declarations for PDA-backed accounts.
-    // Only emit a declaration if there is a matching accounts[] entry with kind == "struct"
-    // and non-empty fields — mirroring the guard used in generate_account_fetch_functions.
+    // Fetch function declarations — one per unique PDA account (by parameter name).
+    // Mirrors generate_account_fetch_functions exactly.
     {
-        use std::collections::HashSet;
-        let mut seen: HashSet<String> = HashSet::new();
+        let mut seen_fetch = std::collections::HashSet::new();
         for ix in &idl.instructions {
             for acc in &ix.accounts {
-                if acc.pda.is_some() {
-                    let acc_name = snake_case(&acc.name);
-                    if !seen.insert(acc_name.clone()) {
-                        continue;
-                    }
-                    if !is_fetch_eligible(idl, &acc_name) { continue; }
-
-                    let fn_name = format!("{}_fetch_{}", prefix, acc_name);
-                    writeln!(out, "/* fetch {} account state */", acc.name).unwrap();
-                    writeln!(out, "char* {fn_name}(const char* args_json);").unwrap();
-                    writeln!(out).unwrap();
-                }
+                if acc.pda.is_none() { continue; }
+                let acc_name = snake_case(&acc.name);
+                if !seen_fetch.insert(acc_name.clone()) { continue; }
+                let fn_name = format!("{prefix}_fetch_{acc_name}");
+                writeln!(out, "/* fetch {acc_name} account state */").unwrap();
+                writeln!(out, "char* {fn_name}(const char* args_json);").unwrap();
+                writeln!(out).unwrap();
             }
         }
     }
 
+    writeln!(out, "/* wallet helpers */").unwrap();
+    writeln!(out, "char* {prefix}_check_connection(const char* args_json);").unwrap();
+    writeln!(out, "char* {prefix}_inspect_account(const char* args_json);").unwrap();
+    writeln!(out, "char* {prefix}_list_accounts(const char* args_json);").unwrap();
+    writeln!(out, "char* {prefix}_create_account(const char* args_json);").unwrap();
+    writeln!(out).unwrap();
     writeln!(out, "void {prefix}_free_string(char* s);").unwrap();
     writeln!(out, "char* {prefix}_version(void);").unwrap();
+    writeln!(out, "char* {prefix}_program_id(void);").unwrap();
+    writeln!(out, "char* {prefix}_decode_account(const char* args_json);").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "#ifdef __cplusplus").unwrap();
     writeln!(out, "}}").unwrap();

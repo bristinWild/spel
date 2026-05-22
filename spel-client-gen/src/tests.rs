@@ -943,37 +943,27 @@ fn test_ffi_fetch_const_pda_no_trailing_comma() {
 }
 
 #[test]
-fn test_ffi_fetch_u128_field_uses_to_string() {
+fn test_ffi_fetch_uses_decode_account_data_try_all() {
+    // Fetch functions now decode via spel_framework_core::decode::decode_account_data_try_all
+    // instead of a generated Borsh struct, so field-specific serialization is not in the FFI.
     let output = generate_from_idl_json(WHISPER_WALL_IDL).expect("codegen should succeed");
     let ffi = &output.ffi_code;
 
-    // u128 field must use .to_string() in json! macro, not bare value
     assert!(
-        ffi.contains("state.total_nonce.to_string()"),
-        "u128 field must use .to_string() in json!: {ffi}"
+        ffi.contains("decode_account_data_try_all"),
+        "fetch function must use decode_account_data_try_all: {ffi}"
     );
-
-    // u64 field should be direct (no .to_string())
     assert!(
-        ffi.contains("state.post_count"),
-        "u64 field should be present: {ffi}"
+        ffi.contains("pub extern \"C\" fn whisper_wall_fetch_wall_state("),
+        "fetch function must be present: {ffi}"
     );
-    // The u64 field should NOT be followed by .to_string()
     assert!(
-        !ffi.contains("state.post_count.to_string()"),
-        "u64 field must not use .to_string(): {ffi}"
+        ffi.contains("\"success\": true"),
+        "fetch function must return success:true: {ffi}"
     );
-}
-
-#[test]
-fn test_ffi_fetch_account_id_field_uses_hex_encode() {
-    let output = generate_from_idl_json(WHISPER_WALL_IDL).expect("codegen should succeed");
-    let ffi = &output.ffi_code;
-
-    // account_id field must use hex::encode
     assert!(
-        ffi.contains("hex::encode(&state.owner)"),
-        "account_id field must use hex::encode: {ffi}"
+        ffi.contains("\"state\""),
+        "fetch function must return state field: {ffi}"
     );
 }
 
@@ -1116,13 +1106,13 @@ fn test_ffi_fetch_deduplication() {
 }
 
 #[test]
-fn test_ffi_fetch_no_type_info_no_function() {
-    // PDA account without a matching entry in idl.accounts → no fetch function generated
+fn test_ffi_fetch_pda_account_generates_function() {
+    // PDA accounts always get a fetch function; decoding via decode_account_data_try_all
+    // handles the type-matching at runtime.
     let output = generate_from_idl_json(SAMPLE_IDL).expect("codegen should succeed");
-    // SAMPLE_IDL has multisig_state PDA but no accounts[] entry
     assert!(
-        !output.ffi_code.contains("fn my_multisig_fetch_multisig_state"),
-        "should not generate fetch function when no account type info is available"
+        output.ffi_code.contains("fn my_multisig_fetch_multisig_state"),
+        "fetch function must be generated for any PDA account: {}", output.ffi_code
     );
 }
 
@@ -1138,22 +1128,20 @@ fn test_header_includes_fetch_declaration() {
 }
 
 #[test]
-fn test_ffi_fetch_borsh_decode_in_function() {
+fn test_ffi_fetch_decode_and_response() {
     let output = generate_from_idl_json(WHISPER_WALL_IDL).expect("codegen should succeed");
     let ffi = &output.ffi_code;
 
-    // Must call try_from_slice on the state struct via the fully-qualified trait path
+    // Must decode via spel_framework_core (not a generated Borsh struct)
     assert!(
-        ffi.contains("<WallStateState as borsh::BorshDeserialize>::try_from_slice("),
-        "fetch function must decode via <WallStateState as borsh::BorshDeserialize>::try_from_slice: {ffi}"
+        ffi.contains("decode_account_data_try_all"),
+        "fetch function must use decode_account_data_try_all: {ffi}"
     );
-
     // Must call get_account
     assert!(
         ffi.contains("get_account(pda)"),
         "fetch function must call get_account(pda): {ffi}"
     );
-
     // Must return success JSON with state
     assert!(
         ffi.contains("\"success\": true"),
@@ -1228,4 +1216,241 @@ fn test_account_seed_pda_binding_order() {
 fn test_ffi_code_is_valid_rust_syntax_sample_idl() {
     let output = generate_from_idl_json(SAMPLE_IDL).expect("codegen should succeed");
     assert_parses_as_rust("SAMPLE_IDL ffi_code", &output.ffi_code);
+}
+
+/// IDL with `types` entries (enum with and without variant fields) referenced by
+/// account struct fields via `Defined`.  The generator must:
+/// 1. Emit Borsh type definitions for each entry in `idl.types`
+/// 2. Emit the account struct with the Defined field types
+/// 3. Emit a fetch function with correct JSON serialization (match for unit enums,
+///    serde_json::json! match for enums with fields)
+const DEFINED_TYPES_IDL: &str = r#"{
+    "version": "0.1.0",
+    "name": "test_program",
+    "instructions": [
+        {
+            "name": "propose",
+            "accounts": [
+                {
+                    "name": "proposal",
+                    "writable": true,
+                    "signer": false,
+                    "init": true,
+                    "pda": {
+                        "seeds": [
+                            {"kind": "const", "value": "prop____"},
+                            {"kind": "arg", "path": "index"}
+                        ]
+                    }
+                }
+            ],
+            "args": [
+                {"name": "index", "type": "u64"}
+            ]
+        }
+    ],
+    "accounts": [
+        {
+            "name": "Proposal",
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {"name": "index", "type": "u64"},
+                    {"name": "proposer", "type": "[u8; 32]"},
+                    {"name": "status", "type": {"defined": "ProposalStatus"}},
+                    {"name": "action", "type": {"option": {"defined": "ConfigAction"}}}
+                ]
+            }
+        }
+    ],
+    "types": [
+        {
+            "kind": "enum",
+            "name": "ProposalStatus",
+            "variants": [
+                {"name": "Active"},
+                {"name": "Executed"},
+                {"name": "Rejected"}
+            ]
+        },
+        {
+            "kind": "enum",
+            "name": "ConfigAction",
+            "variants": [
+                {
+                    "name": "AddMember",
+                    "fields": [{"name": "new_member", "type": {"array": ["u8", 32]}}]
+                },
+                {
+                    "name": "ChangeThreshold",
+                    "fields": [{"name": "new_threshold", "type": "u8"}]
+                }
+            ]
+        }
+    ]
+}"#;
+
+#[test]
+fn test_defined_types_emitted() {
+    let output = generate_from_idl_json(DEFINED_TYPES_IDL).expect("codegen should succeed");
+    let ffi = &output.ffi_code;
+
+    // Borsh type definitions must be emitted (for potential direct use)
+    assert!(ffi.contains("enum ProposalStatus"), "must emit ProposalStatus enum");
+    assert!(ffi.contains("Active,"), "ProposalStatus must have Active variant");
+    assert!(ffi.contains("enum ConfigAction"), "must emit ConfigAction enum");
+    assert!(ffi.contains("AddMember"), "ConfigAction must have AddMember variant");
+
+    // Account struct must be emitted with Defined fields
+    assert!(ffi.contains("struct ProposalState"), "must emit ProposalState struct");
+    assert!(ffi.contains("pub status: ProposalStatus"), "ProposalState must have status: ProposalStatus");
+    assert!(ffi.contains("pub action: Option<ConfigAction>"), "ProposalState must have action: Option<ConfigAction>");
+
+    // Fetch function must be emitted (keyed by parameter name "proposal")
+    assert!(ffi.contains("fn test_program_fetch_proposal_impl"), "must emit fetch_proposal_impl");
+
+    // Decode via try_all (not Borsh field-by-field serialization)
+    assert!(ffi.contains("decode_account_data_try_all"), "fetch must use decode_account_data_try_all");
+}
+
+#[test]
+fn test_defined_types_ffi_is_valid_rust() {
+    let output = generate_from_idl_json(DEFINED_TYPES_IDL).expect("codegen should succeed");
+    assert_parses_as_rust("DEFINED_TYPES_IDL ffi_code", &output.ffi_code);
+}
+
+/// IDL with a [u8; 32] instruction argument (e.g. a PDA seed key).
+/// The generator must use `parse_bytes32` (not `parse_account_id`) so the
+/// parsed type is `[u8; 32]`, matching the instruction enum field type.
+const BYTES32_ARG_IDL: &str = r#"{
+    "version": "0.1.0",
+    "name": "test_program",
+    "instructions": [
+        {
+            "name": "create",
+            "accounts": [],
+            "args": [
+                {"name": "create_key", "type": {"array": ["u8", 32]}},
+                {"name": "owner",      "type": "account_id"}
+            ]
+        }
+    ],
+    "accounts": [],
+    "types": []
+}"#;
+
+#[test]
+fn test_bytes32_arg_uses_parse_bytes32() {
+    let output = generate_from_idl_json(BYTES32_ARG_IDL).expect("codegen should succeed");
+    let ffi = &output.ffi_code;
+
+    // [u8; 32] arg must use parse_bytes32, not parse_account_id
+    assert!(ffi.contains("parse_bytes32("), "must emit parse_bytes32 helper");
+    assert!(ffi.contains("let create_key = parse_bytes32("), "create_key must use parse_bytes32");
+
+    // account_id arg still uses parse_account_id
+    assert!(ffi.contains("let owner = parse_account_id("), "owner must use parse_account_id");
+}
+
+#[test]
+fn test_bytes32_arg_ffi_is_valid_rust() {
+    let output = generate_from_idl_json(BYTES32_ARG_IDL).expect("codegen should succeed");
+    assert_parses_as_rust("BYTES32_ARG_IDL ffi_code", &output.ffi_code);
+}
+
+// ── logos-module codegen tests ────────────────────────────────────────────────
+
+use crate::generate_logos_module_from_idl_json;
+
+#[test]
+fn test_logos_module_all_files_non_empty() {
+    // generate_logos_module must produce all 9 artifacts for a minimal IDL.
+    let output = generate_logos_module_from_idl_json(SAMPLE_IDL, None, None)
+        .expect("logos-module codegen should succeed");
+    assert!(!output.backend_h.is_empty(),     "backend_h must not be empty");
+    assert!(!output.backend_cpp.is_empty(),   "backend_cpp must not be empty");
+    assert!(!output.plugin_h.is_empty(),      "plugin_h must not be empty");
+    assert!(!output.plugin_cpp.is_empty(),    "plugin_cpp must not be empty");
+    assert!(!output.main_cpp.is_empty(),      "main_cpp must not be empty");
+    assert!(!output.main_qml.is_empty(),      "main_qml must not be empty");
+    assert!(!output.module_yaml.is_empty(),   "module_yaml must not be empty");
+    assert!(!output.manifest_json.is_empty(), "manifest_json must not be empty");
+    assert!(!output.cmake_lists.is_empty(),   "cmake_lists must not be empty");
+}
+
+#[test]
+fn test_logos_module_instruction_becomes_invokable() {
+    // Each IDL instruction must appear as a Q_INVOKABLE in the generated header.
+    let output = generate_logos_module_from_idl_json(SAMPLE_IDL, None, None)
+        .expect("logos-module codegen should succeed");
+    assert!(output.backend_h.contains("Q_INVOKABLE"), "backend_h must have Q_INVOKABLE");
+    assert!(output.backend_h.contains("void create("), "backend_h must expose create()");
+    assert!(output.backend_h.contains("void approve("), "backend_h must expose approve()");
+    assert!(output.backend_cpp.contains("create("), "backend_cpp must implement create()");
+    assert!(output.backend_cpp.contains("approve("), "backend_cpp must implement approve()");
+}
+
+#[test]
+fn test_logos_module_pda_account_generates_fetch_page() {
+    // Regression: fetch_eligible_accounts used to match instruction param names against IDL
+    // account type names (which often differ), causing PDA state pages to be silently dropped.
+    // Any PDA account in any instruction must produce a fetch section in the QML and a
+    // Q_INVOKABLE fetchXxx() in the backend.
+    let output = generate_logos_module_from_idl_json(WHISPER_WALL_IDL, None, None)
+        .expect("logos-module codegen should succeed");
+
+    // Backend must expose a fetch method for the wall_state PDA
+    assert!(
+        output.backend_h.contains("fetchWallState") || output.backend_h.contains("fetch_wall_state"),
+        "backend_h must expose a fetch method for wall_state PDA: {}",
+        output.backend_h
+    );
+
+    // QML must have a button or section for fetching the wall_state
+    assert!(
+        output.main_qml.contains("fetchWallState") || output.main_qml.contains("fetch_wall_state"),
+        "QML must reference the wall_state fetch: {}",
+        output.main_qml
+    );
+}
+
+#[test]
+fn test_logos_module_pda_fetch_deduplicated() {
+    // If the same PDA account appears in two instructions, only one fetch page should be emitted.
+    let idl = r#"{
+        "version": "0.1.0",
+        "name": "dup_prog",
+        "instructions": [
+            {
+                "name": "read",
+                "accounts": [{"name": "shared_state", "writable": false, "signer": false, "init": false,
+                    "pda": {"seeds": [{"kind": "const", "value": "shared"}]}}],
+                "args": []
+            },
+            {
+                "name": "write",
+                "accounts": [{"name": "shared_state", "writable": true, "signer": false, "init": false,
+                    "pda": {"seeds": [{"kind": "const", "value": "shared"}]}}],
+                "args": []
+            }
+        ],
+        "accounts": [], "types": [], "errors": []
+    }"#;
+    let output = generate_logos_module_from_idl_json(idl, None, None)
+        .expect("logos-module codegen should succeed");
+    let qml = &output.main_qml;
+    let count = qml.matches("fetchSharedState").count()
+        + qml.matches("fetch_shared_state").count();
+    // The fetch should appear at most a small number of times (header + call), not doubled
+    assert!(count <= 3, "fetch page must not be duplicated for same PDA in two instructions: appeared {count}x");
+}
+
+#[test]
+fn test_logos_module_class_name_is_pascal_case() {
+    // The generated C++ class must use PascalCase derived from the IDL name.
+    let output = generate_logos_module_from_idl_json(SAMPLE_IDL, None, None)
+        .expect("logos-module codegen should succeed");
+    assert!(output.backend_h.contains("MyMultisigBackend"),  "class must be MyMultisigBackend");
+    assert!(output.plugin_h.contains("MyMultisigPlugin"),    "plugin class must be MyMultisigPlugin");
+    assert!(output.manifest_json.contains("my_multisig"),    "manifest must use snake_case program name");
 }
