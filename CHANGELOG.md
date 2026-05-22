@@ -1,5 +1,64 @@
 # Changelog
 
+## v0.4.0 (2026-05-22)
+
+### ✨ Features
+
+**`spel-client-gen`: `--target logos-module` — Qt/QML Basecamp module scaffold from IDL (#209)**
+
+Adds a new code generation target that emits a complete, compilable Qt/QML
+Basecamp plugin directly from a SPEL IDL. Run once with `make ui-gen`,
+customise the generated QML, then use `make ui-regen` on subsequent IDL
+changes to preserve hand-written UI while regenerating the C++ backend.
+
+Generated output (9 files):
+
+- `src/{Class}Backend.h/cpp` — `QObject` with `Q_INVOKABLE` per instruction and `Q_PROPERTY` per state account; async FFI dispatch via `QFutureWatcher + QThreadPool`
+- `src/{Class}Plugin.h/cpp` — Basecamp `IComponent` plugin with `Q_INIT_RESOURCE` for embedded QML
+- `src/main.cpp` — standalone preview app entry point
+- `qml/Main.qml` — sidebar + `StackLayout` UI: ACCOUNTS / INSTRUCTIONS / WALLET / SETTINGS sections
+- `module.yaml` + `manifest.json` — logos-module-builder and Basecamp runtime metadata
+- `CMakeLists.txt` — Qt6 CMake build wiring FFI `.so` and plugin + preview app targets
+
+Key capabilities:
+
+- **QSettings persistence** — `walletPath`, `sequencerUrl`, `programIdHex` persist across restarts; priority chain: QSettings → env var → compiled-in FFI constant (`{module}_program_id()`) → default
+- **Account picker dropdown** — account-typed instruction fields show a RECENT (field history) + WALLET (live accounts) picker; non-account fields get a RECENT-only history dropdown
+- **Field history** — per-field input history backed by `QSettings`, capped at 10 entries, deduplicated on save
+- **TxPoller confirmation** — FFI waits for block inclusion via `TxPoller` before returning success; busy indicator stays active until then
+- **`[u8; 32]` arg unification** — accepts base58 (`Public/`/`Private/` prefix), hex (`0x` prefix), or raw hex for any 32-byte instruction argument
+- **`--module-name`** — overrides class/file/env-var names independently of the IDL `name` field (e.g. `--module-name lez_multisig` from a `multisig_program` IDL)
+- **`--skip-ui`** — skips `qml/Main.qml` on re-generation; `make ui-regen` uses this automatically
+- **`--ffi-lib-path`** — auto-wires `CMakeLists.txt` to the compiled FFI `.so`
+- **Wallet page** — connection ping, account listing, account creation, on-demand Borsh account inspector
+- **E2E test** — `e2e_logos_module_codegen` added to the framework test suite
+
+**`spel pda`: resolve account seeds from CLI args (#194)**
+
+`spel pda` now resolves seed values that reference instruction arguments
+directly from the CLI, removing the need to pre-compute seed bytes manually.
+
+**`generate_idl!`: scan path-dependency crates + qualified attribute form (#180)**
+
+`#[account_type]` structs defined in path-dependency crates (common in
+multi-crate workspaces) are now picked up by the macro. The qualified form
+`#[spel_framework::account_type]` is also recognised.
+
+### 🐛 Fixes
+
+- Suppress spurious `r0vm` ImageID error in `make build` (#205)
+- LEZ compat workflow: fix Cargo.lock extraction and sed escaping (#201)
+- `spel init` E2E test: use `--owner` flag (was `--account`) (#206)
+- Validity window test coverage and doc improvements (#203)
+
+### 🧪 Tests & Docs
+
+- Integration test for macro validity window pass-through (#202)
+- Init E2E CI test exercising `spel init` with default flags (#185)
+- README: troubleshooting section for `ring`/`riscv32` guest build failure (#181)
+
+---
+
 ## v0.3.0 (2026-05-13)
 
 ### ✨ Features
