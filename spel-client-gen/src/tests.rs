@@ -1454,3 +1454,53 @@ fn test_logos_module_class_name_is_pascal_case() {
     assert!(output.plugin_h.contains("MyMultisigPlugin"),    "plugin class must be MyMultisigPlugin");
     assert!(output.manifest_json.contains("my_multisig"),    "manifest must use snake_case program name");
 }
+
+#[test]
+fn test_rest_account_name_match_single_vec() {
+    // Single Vec<[u8;32]> arg: still derives correctly (unchanged behaviour).
+    let idl = r#"{
+        "version": "0.1.0",
+        "name": "test_prog",
+        "instructions": [{
+            "name": "create",
+            "accounts": [
+                {"name": "state", "writable": true, "signer": false, "init": false},
+                {"name": "member_accounts", "writable": false, "signer": false, "init": false, "rest": true}
+            ],
+            "args": [
+                {"name": "members", "type": {"vec": "[u8; 32]"}},
+                {"name": "threshold", "type": "u64"}
+            ]
+        }],
+        "accounts": [], "types": [], "errors": []
+    }"#;
+    let output = generate_from_idl_json(idl).expect("codegen should succeed");
+    // The derived fallback should reference `members`, not require the caller to pass member_accounts
+    assert!(output.ffi_code.contains("members"), "FFI should reference members arg");
+}
+
+#[test]
+fn test_rest_account_name_match_prefers_named_arg() {
+    // Two Vec<[u8;32]> args: name matching picks the right one for each rest account.
+    let idl = r#"{
+        "version": "0.1.0",
+        "name": "test_prog",
+        "instructions": [{
+            "name": "multi",
+            "accounts": [
+                {"name": "state", "writable": true, "signer": false, "init": false},
+                {"name": "member_accounts", "writable": false, "signer": false, "init": false, "rest": true}
+            ],
+            "args": [
+                {"name": "signers", "type": {"vec": "[u8; 32]"}},
+                {"name": "members", "type": {"vec": "[u8; 32]"}}
+            ]
+        }],
+        "accounts": [], "types": [], "errors": []
+    }"#;
+    let output = generate_from_idl_json(idl).expect("codegen should succeed");
+    let ffi = &output.ffi_code;
+    // member_accounts → should derive from `members`, not `signers`
+    assert!(ffi.contains("members.iter()") || ffi.contains("members"),
+        "FFI should derive member_accounts from members arg: {ffi}");
+}

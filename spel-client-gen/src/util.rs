@@ -123,6 +123,49 @@ pub fn idl_type_to_json_parse(ty: &spel_framework_core::idl::IdlType, var: &str)
     }
 }
 
+/// Find the best-matching `Vec<[u8;32]>` instruction arg for a `rest: true` account.
+///
+/// Priority:
+/// 1. An arg whose name matches after stripping `_accounts` from `acc_name`
+///    and normalising plural/singular (e.g. `member_accounts` → `members`/`member`).
+/// 2. The first arg of type `Vec<[u8;32]>` regardless of name.
+///
+/// Returns `None` if no `Vec<[u8;32]>` arg exists at all.
+/// Find the best-matching `Vec<[u8;32]>` instruction arg for a `rest: true` account.
+///
+/// Priority:
+/// 1. An arg whose name matches after stripping `_accounts` from `acc_name`
+///    and normalising plural/singular (e.g. `member_accounts` → `members`/`member`).
+/// 2. The first arg of type `Vec<[u8;32]>` regardless of name.
+///
+/// Returns `None` if no `Vec<[u8;32]>` arg exists at all.
+pub fn find_rest_arg<'a>(
+    acc_name: &str,
+    args: &'a [spel_framework_core::idl::IdlArg],
+) -> Option<&'a spel_framework_core::idl::IdlArg> {
+    let candidates: Vec<&spel_framework_core::idl::IdlArg> =
+        args.iter().filter(|a| is_vec_bytes32(&a.type_)).collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        return Some(candidates[0]);
+    }
+    // Build candidate names from acc_name:
+    //   member_accounts → member, members
+    //   signers → signer, signers
+    let base = acc_name.strip_suffix("_accounts").unwrap_or(acc_name);
+    let singular = base.strip_suffix('s').unwrap_or(base);
+    let plural = if base.ends_with('s') { base.to_string() } else { format!("{base}s") };
+    for &arg in &candidates {
+        let n = arg.name.as_str();
+        if n == base || n == singular || n == plural.as_str() {
+            return Some(arg);
+        }
+    }
+    Some(candidates[0])
+}
+
 /// Returns true if `ty` is a `Vec` whose element type is a 32-byte value
 /// (`[u8; 32]`, `AccountId`, or any spelling thereof).
 pub fn is_vec_bytes32(ty: &spel_framework_core::idl::IdlType) -> bool {
