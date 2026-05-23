@@ -48,6 +48,7 @@ pub async fn run() {
     let mut dry_run: Option<tx::DryRunFormat> = None;
     let mut type_name: Option<String> = None;
     let mut data_hex: Option<String> = None;
+    let mut inspect_format: Option<String> = None;
     let mut extra_bins: HashMap<String, String> = HashMap::new();
     let mut remaining_args: Vec<String> = vec![args[0].clone()];
     let mut used_separator = false;
@@ -92,6 +93,13 @@ pub async fn run() {
                         process::exit(1);
                     }
                 });
+            }
+            "--format" => {
+                i += 1;
+                if i < args.len() { inspect_format = Some(args[i].clone()); }
+            }
+            s if s.starts_with("--format=") => {
+                inspect_format = Some(s["--format=".len()..].to_string());
             }
             s if s.starts_with("--bin-") => {
                 let name = s.strip_prefix("--bin-").unwrap().to_string();
@@ -213,7 +221,7 @@ pub async fn run() {
                 return;
             }
             "inspect" if type_name.is_none() && data_hex.is_none() && idl_path.is_empty() => {
-                inspect_binaries(&remaining_args[2..]);
+                inspect_binaries(&remaining_args[2..], inspect_format.as_deref());
                 return;
             }
             "inspect" => {
@@ -370,7 +378,7 @@ pub async fn run() {
             ).await;
         }
         Some("inspect") => {
-            inspect_binaries(&remaining_args[2..]);
+            inspect_binaries(&remaining_args[2..], inspect_format.as_deref());
         }
         Some("pda") => {
             compute_pda_command(&idl, program_path.as_deref(), program_id_hex.as_deref(), &remaining_args[2..]);

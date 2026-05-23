@@ -4,6 +4,7 @@ use nssa_core::account::AccountId;
 use nssa_core::{NullifierPublicKey};
 use nssa_core::program::{PdaSeed, ProgramId};
 use sha2::{Sha256, Digest};
+use base58::FromBase58;
 
 /// Trait for converting a value into a 32-byte PDA seed.
 ///
@@ -127,6 +128,74 @@ pub fn compute_pda_multi(program_id: &ProgramId, seeds: &[&dyn ToSeed]) -> Accou
     let converted: Vec<[u8; 32]> = seeds.iter().map(|s| s.to_seed()).collect();
     let refs: Vec<&[u8; 32]> = converted.iter().collect();
     compute_pda(program_id, &refs)
+}
+
+/// Derive a PDA from a program ID and raw byte-slice seeds (variable length, ≤ 32 bytes each).
+///
+/// Pads each seed to 32 bytes and then delegates to [`compute_pda`]. This is the variant
+/// used by generated FFI code where seeds arrive as `&[u8]` rather than `&[u8; 32]`.
+pub fn compute_pda_raw(program_id: &ProgramId, seeds: &[&[u8]]) -> Result<AccountId, String> {
+    if seeds.is_empty() {
+        return Err("PDA requires at least one seed".into());
+    }
+    let mut arrays: Vec<[u8; 32]> = Vec::with_capacity(seeds.len());
+    for seed in seeds {
+        let len = seed.len();
+        if len > 32 {
+            return Err(format!("PDA seed exceeds 32 bytes ({len})"));
+        }
+        let mut padded = [0u8; 32];
+        padded[..len].copy_from_slice(seed);
+        arrays.push(padded);
+    }
+    let refs: Vec<&[u8; 32]> = arrays.iter().collect();
+    Ok(compute_pda(program_id, &refs))
+}
+
+/// Decode a 32-byte value from a base58 or hex string.
+///
+/// Accepts (in priority order):
+/// - `Public/<value>` or `Private/<value>` — strips the prefix, then processes `<value>`
+/// - `0x<hex>` or `0X<hex>` — 64 hex characters (explicit hex marker, checked first)
+/// - `<hex>` — exactly 64 hex characters (tried before base58 to avoid ambiguity)
+/// - `<base58>` — base58-encoded 32-byte value (~44 chars)
+///
+/// Returns an error if the string does not match any of the above or decodes to a length other than 32.
+pub fn parse_bytes32(input: &str) -> Result<[u8; 32], String> {
+    let s = input
+        .strip_prefix("Public/")
+        .or_else(|| input.strip_prefix("Private/"))
+        .unwrap_or(input);
+
+    let hex_part = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    if hex_part.len() == 64 {
+        let mut arr = [0u8; 32];
+        let mut ok = true;
+        for (i, chunk) in hex_part.as_bytes().chunks(2).enumerate() {
+            if let Ok(byte_str) = std::str::from_utf8(chunk) {
+                if let Ok(b) = u8::from_str_radix(byte_str, 16) {
+                    arr[i] = b;
+                    continue;
+                }
+            }
+            ok = false;
+            break;
+        }
+        if ok {
+            return Ok(arr);
+        }
+    }
+
+    if let Ok(bytes) = s.from_base58() {
+        if bytes.len() == 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            return Ok(arr);
+        }
+        return Err(format!("base58 decoded to {} bytes, expected 32", bytes.len()));
+    }
+
+    Err(format!("expected 32 bytes (64 hex chars or base58-encoded key), got: {input}"))
 }
 
 #[cfg(test)]
@@ -329,5 +398,74 @@ mod tests {
         let s3 = seq.to_seed();
         let expected = compute_pda(&program_id, &[&s1, &s2, &s3]);
         assert_eq!(pda, expected);
+    }
+
+    // ── compute_pda_raw tests ───────────────────────────────────────
+
+    #[test]
+    fn test_compute_pda_raw_matches_compute_pda() {
+        let program_id: ProgramId = [1u32; 8];
+        let seed = seed_from_str("test");
+        let expected = compute_pda(&program_id, &[&seed]);
+        let raw = compute_pda_raw(&program_id, &[b"test"]).unwrap();
+        assert_eq!(raw, expected);
+    }
+
+    #[test]
+    fn test_compute_pda_raw_multi_seed() {
+        let program_id: ProgramId = [3u32; 8];
+        let s1 = seed_from_str("prefix");
+        let s2 = [0xabu8; 32];
+        let expected = compute_pda(&program_id, &[&s1, &s2]);
+        let raw = compute_pda_raw(&program_id, &[b"prefix", &[0xabu8; 32]]).unwrap();
+        assert_eq!(raw, expected);
+    }
+
+    #[test]
+    fn test_compute_pda_raw_empty_returns_err() {
+        let program_id: ProgramId = [1u32; 8];
+        assert!(compute_pda_raw(&program_id, &[]).is_err());
+    }
+
+    #[test]
+    fn test_compute_pda_raw_seed_too_long() {
+        let program_id: ProgramId = [1u32; 8];
+        let long = [0u8; 33];
+        assert!(compute_pda_raw(&program_id, &[&long]).is_err());
+    }
+
+    // ── parse_bytes32 tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_parse_bytes32_hex_with_0x() {
+        let input = format!("0x{}", "ab".repeat(32));
+        let result = parse_bytes32(&input).unwrap();
+        assert_eq!(result, [0xab; 32]);
+    }
+
+    #[test]
+    fn test_parse_bytes32_hex_without_0x() {
+        let input = "ab".repeat(32);
+        let result = parse_bytes32(&input).unwrap();
+        assert_eq!(result, [0xab; 32]);
+    }
+
+    #[test]
+    fn test_parse_bytes32_public_prefix_stripped() {
+        let hex = format!("0x{}", "cd".repeat(32));
+        let with_prefix = format!("Public/{}", hex);
+        assert_eq!(parse_bytes32(&with_prefix).unwrap(), [0xcdu8; 32]);
+    }
+
+    #[test]
+    fn test_parse_bytes32_private_prefix_stripped() {
+        let hex = "ef".repeat(32);
+        let with_prefix = format!("Private/{}", hex);
+        assert_eq!(parse_bytes32(&with_prefix).unwrap(), [0xefu8; 32]);
+    }
+
+    #[test]
+    fn test_parse_bytes32_wrong_length() {
+        assert!(parse_bytes32("deadbeef").is_err());
     }
 }
