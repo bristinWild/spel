@@ -5,7 +5,11 @@ edition = "2021"
 description = "Core types for the SPEL program framework"
 
 [features]
-default = []
+# `decode` is enabled by default for CLI and FFI consumers.
+# Guest programs that don't need runtime Borsh account decoding can opt out:
+#   spel-framework-core = { ..., default-features = false }
+default = ["decode"]
+decode = []
 idl-gen = ["dep:syn", "dep:proc-macro2", "dep:toml"]
 host = ["dep:nssa"]
 

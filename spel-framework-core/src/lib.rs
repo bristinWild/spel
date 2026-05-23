@@ -9,6 +9,7 @@ pub mod idl;
 pub mod pda;
 pub mod validation;
 pub mod context;
+#[cfg(feature = "decode")]
 pub mod decode;
 
 #[cfg(feature = "idl-gen")]
