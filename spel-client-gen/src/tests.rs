@@ -1454,3 +1454,105 @@ fn test_logos_module_class_name_is_pascal_case() {
     assert!(output.plugin_h.contains("MyMultisigPlugin"),    "plugin class must be MyMultisigPlugin");
     assert!(output.manifest_json.contains("my_multisig"),    "manifest must use snake_case program name");
 }
+
+#[test]
+fn test_rest_account_name_match_single_vec() {
+    // Single Vec<[u8;32]> arg: still derives correctly (unchanged behaviour).
+    let idl = r#"{
+        "version": "0.1.0",
+        "name": "test_prog",
+        "instructions": [{
+            "name": "create",
+            "accounts": [
+                {"name": "state", "writable": true, "signer": false, "init": false},
+                {"name": "member_accounts", "writable": false, "signer": false, "init": false, "rest": true}
+            ],
+            "args": [
+                {"name": "members", "type": {"vec": "[u8; 32]"}},
+                {"name": "threshold", "type": "u64"}
+            ]
+        }],
+        "accounts": [], "types": [], "errors": []
+    }"#;
+    let output = generate_from_idl_json(idl).expect("codegen should succeed");
+    // Rest accounts must be derived from the `members` arg, not required as a separate JSON field.
+    assert!(
+        output.ffi_code.contains("members.iter()"),
+        "FFI should derive member_accounts from members.iter(): {}",
+        output.ffi_code
+    );
+}
+
+#[test]
+fn test_rest_account_name_match_prefers_named_arg() {
+    // Two Vec<[u8;32]> args: name matching must pick `members` for `member_accounts`,
+    // not the first arg (`signers`).
+    let idl = r#"{
+        "version": "0.1.0",
+        "name": "test_prog",
+        "instructions": [{
+            "name": "multi",
+            "accounts": [
+                {"name": "state", "writable": true, "signer": false, "init": false},
+                {"name": "member_accounts", "writable": false, "signer": false, "init": false, "rest": true}
+            ],
+            "args": [
+                {"name": "signers", "type": {"vec": "[u8; 32]"}},
+                {"name": "members", "type": {"vec": "[u8; 32]"}}
+            ]
+        }],
+        "accounts": [], "types": [], "errors": []
+    }"#;
+    let output = generate_from_idl_json(idl).expect("codegen should succeed");
+    let ffi = &output.ffi_code;
+    assert!(
+        ffi.contains("members.iter()"),
+        "FFI should derive member_accounts from members, not signers: {ffi}"
+    );
+    assert!(
+        !ffi.contains("signers.iter()"),
+        "FFI must not derive member_accounts from signers: {ffi}"
+    );
+}
+
+#[test]
+fn test_rest_account_name_match_non_accounts_suffixes() {
+    // _list, _set, _keys, _ids and _addrs suffixes are also stripped for name matching.
+    for (acc_name, arg_name) in [
+        ("signers_list", "signers"),
+        ("validator_set", "validators"),
+        ("member_keys", "members"),
+        ("node_ids", "nodes"),
+        ("peer_addrs", "peers"),
+    ] {
+        let idl = format!(
+            r#"{{
+                "version": "0.1.0",
+                "name": "test_prog",
+                "instructions": [{{
+                    "name": "op",
+                    "accounts": [
+                        {{"name": "state", "writable": true, "signer": false, "init": false}},
+                        {{"name": "{acc_name}", "writable": false, "signer": false, "init": false, "rest": true}}
+                    ],
+                    "args": [
+                        {{"name": "unrelated", "type": {{"vec": "[u8; 32]"}}}},
+                        {{"name": "{arg_name}", "type": {{"vec": "[u8; 32]"}}}}
+                    ]
+                }}],
+                "accounts": [], "types": [], "errors": []
+            }}"#
+        );
+        let output = generate_from_idl_json(&idl)
+            .unwrap_or_else(|e| panic!("codegen failed for {acc_name}: {e}"));
+        let ffi = &output.ffi_code;
+        assert!(
+            ffi.contains(&format!("{arg_name}.iter()")),
+            "{acc_name} should derive from {arg_name}: {ffi}"
+        );
+        assert!(
+            !ffi.contains("unrelated.iter()"),
+            "{acc_name} must not fall back to unrelated: {ffi}"
+        );
+    }
+}

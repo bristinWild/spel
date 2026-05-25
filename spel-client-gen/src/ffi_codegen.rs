@@ -293,7 +293,9 @@ pub fn generate_ffi(idl: &SpelIdl, idl_json: &str) -> Result<String, String> {
             if acc.rest {
                 // If there's a Vec<[u8;32]> arg, derive rest accounts from it when the
                 // JSON field is absent — the UI sends keys only once (as the instruction arg).
-                let src_arg = ix.args.iter().find(|a| is_vec_bytes32(&a.type_));
+                // Use name-based matching first (e.g. member_accounts → members/member),
+                // falling back to the first Vec<[u8;32]> arg.
+                let src_arg = find_rest_arg(&acc.name, &ix.args);
                 if let Some(src) = src_arg {
                     let src_name = rust_ident(&src.name);
                     writeln!(out, "    let {name}: Vec<AccountId> = if v[\"{}\"].is_array() {{", acc.name).unwrap();

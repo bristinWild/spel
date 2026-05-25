@@ -123,6 +123,52 @@ pub fn idl_type_to_json_parse(ty: &spel_framework_core::idl::IdlType, var: &str)
     }
 }
 
+/// Known collection suffixes stripped when deriving an arg name from a rest-account name.
+const COLLECTION_SUFFIXES: &[&str] = &["_accounts", "_list", "_set", "_keys", "_ids", "_addrs"];
+
+/// Find the best-matching `Vec<[u8;32]>` instruction arg for a `rest: true` account.
+///
+/// Priority:
+/// 1. An arg whose name matches after stripping a known collection suffix from `acc_name`
+///    (see [`COLLECTION_SUFFIXES`]) and normalising plural/singular:
+///    `member_accounts` → `member`/`members`, `signers_list` → `signer`/`signers`.
+/// 2. The first `Vec<[u8;32]>` arg, regardless of name — preserves existing behaviour
+///    for single-arg instructions and acts as a fallback for unrecognised naming patterns.
+///
+/// Returns `None` if no `Vec<[u8;32]>` arg exists at all.
+pub fn find_rest_arg<'a>(
+    acc_name: &str,
+    args: &'a [spel_framework_core::idl::IdlArg],
+) -> Option<&'a spel_framework_core::idl::IdlArg> {
+    let candidates: Vec<&spel_framework_core::idl::IdlArg> =
+        args.iter().filter(|a| is_vec_bytes32(&a.type_)).collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        return Some(candidates[0]);
+    }
+    // Strip the first matching collection suffix to get the semantic base name.
+    //   member_accounts → member,  signers_list → signers,  validator_set → validator
+    // Then derive singular (strip trailing 's') and plural (append 's') forms.
+    // Simple strip_suffix('s') is intentional: blockchain identifiers are programmer-chosen
+    // and irregular plurals (status→statu, boss→bos) don't occur in practice.
+    let base = COLLECTION_SUFFIXES
+        .iter()
+        .find_map(|s| acc_name.strip_suffix(s))
+        .unwrap_or(acc_name);
+    let singular = base.strip_suffix('s').unwrap_or(base);
+    let plural = if base.ends_with('s') { base.to_string() } else { format!("{base}s") };
+    for &arg in &candidates {
+        let n = arg.name.as_str();
+        if n == base || n == singular || n == plural.as_str() {
+            return Some(arg);
+        }
+    }
+    // No name match — fall back to first candidate (same as old behaviour).
+    Some(candidates[0])
+}
+
 /// Returns true if `ty` is a `Vec` whose element type is a 32-byte value
 /// (`[u8; 32]`, `AccountId`, or any spelling thereof).
 pub fn is_vec_bytes32(ty: &spel_framework_core::idl::IdlType) -> bool {
