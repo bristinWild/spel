@@ -4,17 +4,17 @@ use nssa::program::Program;
 use crate::hex::hex_encode;
 use std::fs;
 
-/// Inspect one or more ELF binary files and print their ProgramIds.
+/// Extract and print ProgramIds from one or more ELF binary files.
 ///
 /// `format`:
 /// - `None` / `"text"` — human-readable multi-line output (default)
 /// - `"hex"` — one 64-char ImageID hex string per file (machine-readable; useful for
-///   `PROGRAM_ID=$(spel inspect prog.bin --format hex)`)
+///   `PROGRAM_ID=$(spel program-id prog.bin --format hex)`)
 /// - `"json"` — JSON object per file with `path`, `program_id_decimal`,
 ///   `program_id_hex`, and `image_id_hex` fields
 pub fn inspect_binaries(paths: &[String], format: Option<&str>) {
     if paths.is_empty() {
-        eprintln!("Usage: spel inspect <FILE> [FILE...]");
+        eprintln!("Usage: spel program-id <FILE> [FILE...]");
         eprintln!("  Prints the ProgramId ([u32; 8]) for each ELF binary.");
         eprintln!();
         eprintln!("Options:");
@@ -22,6 +22,10 @@ pub fn inspect_binaries(paths: &[String], format: Option<&str>) {
         std::process::exit(1);
     }
     let fmt = format.unwrap_or("text");
+    if !matches!(fmt, "text" | "hex" | "json") {
+        eprintln!("❌ --format: unknown format '{}'. Expected: text, hex, json", fmt);
+        std::process::exit(1);
+    }
     if fmt == "json" && paths.len() > 1 {
         print!("[");
     }
@@ -48,12 +52,13 @@ pub fn inspect_binaries(paths: &[String], format: Option<&str>) {
                             if !first { print!(","); }
                             println!();
                         }
-                        println!(
-                            "{{\"path\":\"{path}\",\"program_id_decimal\":\"{}\",\"program_id_hex\":\"{}\",\"image_id_hex\":\"{}\"}}",
-                            id_strs.join(","),
-                            id_hex.join(","),
-                            image_id_hex,
-                        );
+                        let obj = serde_json::json!({
+                            "path": path,
+                            "program_id_decimal": id_strs.join(","),
+                            "program_id_hex": id_hex.join(","),
+                            "image_id_hex": image_id_hex,
+                        });
+                        print!("{}", obj);
                         first = false;
                     }
                     _ => {

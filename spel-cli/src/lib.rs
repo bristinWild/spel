@@ -96,10 +96,19 @@ pub async fn run() {
             }
             "--format" => {
                 i += 1;
-                if i < args.len() { inspect_format = Some(args[i].clone()); }
+                if i >= args.len() || args[i].starts_with('-') {
+                    eprintln!("❌ --format requires a value: text, hex, or json");
+                    process::exit(1);
+                }
+                inspect_format = Some(args[i].clone());
             }
             s if s.starts_with("--format=") => {
-                inspect_format = Some(s["--format=".len()..].to_string());
+                let val = &s["--format=".len()..];
+                if val.is_empty() {
+                    eprintln!("❌ --format requires a value: text, hex, or json");
+                    process::exit(1);
+                }
+                inspect_format = Some(val.to_string());
             }
             s if s.starts_with("--bin-") => {
                 let name = s.strip_prefix("--bin-").unwrap().to_string();
