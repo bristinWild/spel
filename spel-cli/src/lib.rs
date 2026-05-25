@@ -220,12 +220,11 @@ pub async fn run() {
                 init_project(name, lez_tag.as_deref(), spel_tag.as_deref(), lez_rev.as_deref(), spel_rev.as_deref());
                 return;
             }
-            "inspect" if type_name.is_none() && data_hex.is_none() && idl_path.is_empty() => {
+            "program-id" => {
                 inspect_binaries(&remaining_args[2..], inspect_format.as_deref());
                 return;
             }
             "inspect" => {
-                // Account inspection mode: --type and --idl required
                 if idl_path.is_empty() {
                     eprintln!("Account inspection requires --idl <IDL_FILE>");
                     process::exit(1);
@@ -330,8 +329,8 @@ pub async fn run() {
         eprintln!();
         eprintln!("Commands that don't need --idl:");
         eprintln!("  init <name>              Scaffold a new SPEL project");
-        eprintln!("  inspect <FILE> [FILE...]  Print ProgramId for ELF binary(ies)");
-        eprintln!("  inspect <ACCOUNT-ID> --idl <IDL> --type <TYPE>  Decode account data");
+        eprintln!("  program-id <FILE> [FILE...]  Extract ProgramId from ELF binary(ies)");
+        eprintln!("  inspect <ACCOUNT-ID> --idl <IDL> --type <TYPE>   Decode account data");
         eprintln!("  generate-idl [PATH]      Generate IDL JSON from a program source file or project directory");
         eprintln!();
         eprintln!("  pda <ACCOUNT> [--seed-arg VALUE...]  Compute a PDA defined in the IDL");
@@ -365,7 +364,10 @@ pub async fn run() {
         Some("idl") => {
             println!("{}", serde_json::to_string_pretty(&idl).unwrap());
         }
-        Some("inspect") if type_name.is_some() => {
+        Some("program-id") => {
+            inspect_binaries(&remaining_args[2..], inspect_format.as_deref());
+        }
+        Some("inspect") => {
             let account_id = remaining_args.get(2).unwrap_or_else(|| {
                 eprintln!("Usage: {} inspect <account-id> --idl <IDL> --type <TypeName> [--data <hex>]", args[0]);
                 process::exit(1);
@@ -376,9 +378,6 @@ pub async fn run() {
                 type_name.as_ref().unwrap(),
                 data_hex.as_deref(),
             ).await;
-        }
-        Some("inspect") => {
-            inspect_binaries(&remaining_args[2..], inspect_format.as_deref());
         }
         Some("pda") => {
             compute_pda_command(&idl, program_path.as_deref(), program_id_hex.as_deref(), &remaining_args[2..]);
