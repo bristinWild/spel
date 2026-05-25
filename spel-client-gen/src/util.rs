@@ -128,15 +128,9 @@ pub fn idl_type_to_json_parse(ty: &spel_framework_core::idl::IdlType, var: &str)
 /// Priority:
 /// 1. An arg whose name matches after stripping `_accounts` from `acc_name`
 ///    and normalising plural/singular (e.g. `member_accounts` → `members`/`member`).
-/// 2. The first arg of type `Vec<[u8;32]>` regardless of name.
-///
-/// Returns `None` if no `Vec<[u8;32]>` arg exists at all.
-/// Find the best-matching `Vec<[u8;32]>` instruction arg for a `rest: true` account.
-///
-/// Priority:
-/// 1. An arg whose name matches after stripping `_accounts` from `acc_name`
-///    and normalising plural/singular (e.g. `member_accounts` → `members`/`member`).
-/// 2. The first arg of type `Vec<[u8;32]>` regardless of name.
+/// 2. The first `Vec<[u8;32]>` arg, regardless of name (preserves pre-existing behaviour
+///    for instructions with a single such arg, and acts as a fallback when name matching
+///    fails — e.g. non-`_accounts` suffixes like `signers_list` are not stripped).
 ///
 /// Returns `None` if no `Vec<[u8;32]>` arg exists at all.
 pub fn find_rest_arg<'a>(
@@ -151,9 +145,12 @@ pub fn find_rest_arg<'a>(
     if candidates.len() == 1 {
         return Some(candidates[0]);
     }
-    // Build candidate names from acc_name:
-    //   member_accounts → member, members
-    //   signers → signer, signers
+    // Derive match names from acc_name. Only `_accounts` is stripped; other suffixes
+    // (e.g. `_list`, `_set`) fall through to the first-arg fallback below.
+    //   member_accounts → base=member, singular=member, plural=members
+    //   signers         → base=signers, singular=signer, plural=signers
+    // Note: simple `strip_suffix('s')` is intentional — blockchain arg names are
+    // programmer-chosen identifiers where irregular plurals are extremely rare.
     let base = acc_name.strip_suffix("_accounts").unwrap_or(acc_name);
     let singular = base.strip_suffix('s').unwrap_or(base);
     let plural = if base.ends_with('s') { base.to_string() } else { format!("{base}s") };
@@ -163,6 +160,7 @@ pub fn find_rest_arg<'a>(
             return Some(arg);
         }
     }
+    // No name match — fall back to first candidate (same as old behaviour).
     Some(candidates[0])
 }
 

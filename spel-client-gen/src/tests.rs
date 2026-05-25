@@ -1475,13 +1475,18 @@ fn test_rest_account_name_match_single_vec() {
         "accounts": [], "types": [], "errors": []
     }"#;
     let output = generate_from_idl_json(idl).expect("codegen should succeed");
-    // The derived fallback should reference `members`, not require the caller to pass member_accounts
-    assert!(output.ffi_code.contains("members"), "FFI should reference members arg");
+    // Rest accounts must be derived from the `members` arg, not required as a separate JSON field.
+    assert!(
+        output.ffi_code.contains("members.iter()"),
+        "FFI should derive member_accounts from members.iter(): {}",
+        output.ffi_code
+    );
 }
 
 #[test]
 fn test_rest_account_name_match_prefers_named_arg() {
-    // Two Vec<[u8;32]> args: name matching picks the right one for each rest account.
+    // Two Vec<[u8;32]> args: name matching must pick `members` for `member_accounts`,
+    // not the first arg (`signers`).
     let idl = r#"{
         "version": "0.1.0",
         "name": "test_prog",
@@ -1500,7 +1505,12 @@ fn test_rest_account_name_match_prefers_named_arg() {
     }"#;
     let output = generate_from_idl_json(idl).expect("codegen should succeed");
     let ffi = &output.ffi_code;
-    // member_accounts → should derive from `members`, not `signers`
-    assert!(ffi.contains("members.iter()") || ffi.contains("members"),
-        "FFI should derive member_accounts from members arg: {ffi}");
+    assert!(
+        ffi.contains("members.iter()"),
+        "FFI should derive member_accounts from members, not signers: {ffi}"
+    );
+    assert!(
+        !ffi.contains("signers.iter()"),
+        "FFI must not derive member_accounts from signers: {ffi}"
+    );
 }
