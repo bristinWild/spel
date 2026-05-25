@@ -754,15 +754,11 @@ fn test_ffi_has_catch_unwind() {
 fn test_ffi_parse_account_id_strips_prefix() {
     let output = generate_from_idl_json(SAMPLE_IDL).expect("codegen should succeed");
 
-    // The generated parse_account_id should strip Public/ and Private/ prefixes
+    // parse_account_id and parse_bytes32 now delegate to spel_framework_core which
+    // handles Public/ and Private/ prefix stripping — no inline logic needed.
     assert!(
-        output.ffi_code.contains(r#"s.strip_prefix("Public/")"#),
-        "parse_account_id should strip Public/ prefix: {}",
-        output.ffi_code
-    );
-    assert!(
-        output.ffi_code.contains(r#"s.strip_prefix("Private/")"#),
-        "parse_account_id should strip Private/ prefix: {}",
+        output.ffi_code.contains("spel_framework_core::pda::parse_bytes32"),
+        "parse_account_id must delegate to spel_framework_core::pda::parse_bytes32: {}",
         output.ffi_code
     );
 }
@@ -1453,6 +1449,20 @@ fn test_logos_module_class_name_is_pascal_case() {
     assert!(output.backend_h.contains("MyMultisigBackend"),  "class must be MyMultisigBackend");
     assert!(output.plugin_h.contains("MyMultisigPlugin"),    "plugin class must be MyMultisigPlugin");
     assert!(output.manifest_json.contains("my_multisig"),    "manifest must use snake_case program name");
+}
+
+#[test]
+fn test_ffi_no_inline_pda_or_parse_helpers() {
+    // Regression: generated FFI must delegate to spel_framework_core, not inline these.
+    let output = generate_from_idl_json(SAMPLE_IDL).expect("codegen should succeed");
+    let ffi = &output.ffi_code;
+
+    assert!(!ffi.contains("fn pda_seed_bytes("),
+        "pda_seed_bytes must not be emitted inline; use spel_framework_core::pda::compute_pda_raw");
+    assert!(ffi.contains("spel_framework_core::pda::compute_pda_raw"),
+        "compute_pda_with_program must delegate to spel_framework_core::pda::compute_pda_raw");
+    assert!(ffi.contains("spel_framework_core::pda::parse_bytes32"),
+        "parse_account_id / parse_bytes32 must delegate to spel_framework_core::pda::parse_bytes32");
 }
 
 #[test]

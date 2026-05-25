@@ -47,11 +47,9 @@ pub fn generate_ffi(idl: &SpelIdl, idl_json: &str) -> Result<String, String> {
     writeln!(out, "use std::ffi::{{CStr, CString}};").unwrap();
     writeln!(out, "use std::os::raw::c_char;").unwrap();
     writeln!(out, "use serde_json::{{Value, json}};").unwrap();
-    writeln!(out, "use sha2::{{Sha256, Digest}};").unwrap();
     writeln!(out, "use nssa::{{AccountId, ProgramId, PublicTransaction}};").unwrap();
     writeln!(out, "use nssa::public_transaction::{{Message, WitnessSet}};").unwrap();
     writeln!(out, "use nssa::program::Program;").unwrap();
-    writeln!(out, "use nssa_core::program::PdaSeed;").unwrap();
     writeln!(out, "use sequencer_service_rpc::RpcClient as _;").unwrap();
     writeln!(out, "use wallet::WalletCore;").unwrap();
 
@@ -124,51 +122,9 @@ pub fn generate_ffi(idl: &SpelIdl, idl_json: &str) -> Result<String, String> {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
-    // PDA helper — kept for potential use; all current call sites use compute_pda_with_program.
-    writeln!(out, "#[allow(dead_code)]").unwrap();
-    writeln!(out, "fn compute_pda(seeds: &[&[u8]]) -> AccountId {{").unwrap();
-    writeln!(out, "    let mut hasher = Sha256::new();").unwrap();
-    writeln!(out, "    for seed in seeds {{").unwrap();
-    writeln!(out, "        let mut padded = [0u8; 32];").unwrap();
-    writeln!(out, "        let len = seed.len().min(32);").unwrap();
-    writeln!(out, "        padded[..len].copy_from_slice(&seed[..len]);").unwrap();
-    writeln!(out, "        hasher.update(&padded);").unwrap();
-    writeln!(out, "    }}").unwrap();
-    writeln!(out, "    let hash: [u8; 32] = hasher.finalize().into();").unwrap();
-    writeln!(out, "    AccountId::new(hash)").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
-    // compute_pda_with_program: canonical PDA derivation used by fetch functions.
-    // Matches spel_framework_core::pda::compute_pda exactly:
-    //   single seed  → use padded 32-byte seed directly (no SHA-256)
-    //   multi-seed   → SHA-256 of each padded 32-byte seed
-    // Then derives AccountId from (program_id, PdaSeed) so PDAs are program-specific.
-    writeln!(out, "#[allow(dead_code)]").unwrap();
-    writeln!(out, "fn pda_seed_bytes(seeds: &[&[u8]]) -> Result<[u8; 32], String> {{").unwrap();
-    writeln!(out, "    if seeds.is_empty() {{").unwrap();
-    writeln!(out, "        return Err(\"PDA requires at least one seed\".into());").unwrap();
-    writeln!(out, "    }}").unwrap();
-    writeln!(out, "    if seeds.len() == 1 {{").unwrap();
-    writeln!(out, "        let len = seeds[0].len();").unwrap();
-    writeln!(out, "        if len > 32 {{ return Err(format!(\"PDA seed exceeds 32 bytes ({{len}})\")); }}").unwrap();
-    writeln!(out, "        let mut padded = [0u8; 32];").unwrap();
-    writeln!(out, "        padded[..len].copy_from_slice(&seeds[0][..len]);").unwrap();
-    writeln!(out, "        Ok(padded)").unwrap();
-    writeln!(out, "    }} else {{").unwrap();
-    writeln!(out, "        let mut hasher = Sha256::new();").unwrap();
-    writeln!(out, "        for seed in seeds {{").unwrap();
-    writeln!(out, "            let len = seed.len();").unwrap();
-    writeln!(out, "            if len > 32 {{ return Err(format!(\"PDA seed exceeds 32 bytes ({{len}})\")); }}").unwrap();
-    writeln!(out, "            let mut padded = [0u8; 32];").unwrap();
-    writeln!(out, "            padded[..len].copy_from_slice(&seed[..len]);").unwrap();
-    writeln!(out, "            hasher.update(&padded);").unwrap();
-    writeln!(out, "        }}").unwrap();
-    writeln!(out, "        Ok(hasher.finalize().into())").unwrap();
-    writeln!(out, "    }}").unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out, "#[allow(dead_code)]").unwrap();
+    // PDA derivation delegates to spel_framework_core::pda::compute_pda_raw.
     writeln!(out, "fn compute_pda_with_program(program_id: &ProgramId, seeds: &[&[u8]]) -> Result<AccountId, String> {{").unwrap();
-    writeln!(out, "    Ok(AccountId::for_public_pda(program_id, &PdaSeed::new(pda_seed_bytes(seeds)?)))").unwrap();
+    writeln!(out, "    spel_framework_core::pda::compute_pda_raw(program_id, seeds)").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
@@ -191,36 +147,13 @@ pub fn generate_ffi(idl: &SpelIdl, idl_json: &str) -> Result<String, String> {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
-    // parse_account_id
+    // parse_account_id / parse_bytes32 delegate to spel_framework_core::pda::parse_bytes32.
     writeln!(out, "fn parse_account_id(s: &str) -> Result<AccountId, String> {{").unwrap();
-    writeln!(out, "    let raw = s;\n    let s = s.strip_prefix(\"Public/\").or_else(|| s.strip_prefix(\"Private/\")).unwrap_or(s);").unwrap();
-    writeln!(out, "    if let Ok(id) = s.parse() {{ return Ok(id); }}").unwrap();
-    writeln!(out, "    let s = s.trim_start_matches(\"0x\");").unwrap();
-    writeln!(out, "    if s.len() == 64 {{").unwrap();
-    writeln!(out, "        let bytes = hex::decode(s).map_err(|e| format!(\"invalid hex: {{}}\", e))?;").unwrap();
-    writeln!(out, "        let mut arr = [0u8; 32]; arr.copy_from_slice(&bytes);").unwrap();
-    writeln!(out, "        return Ok(AccountId::new(arr));").unwrap();
-    writeln!(out, "    }}").unwrap();
-    writeln!(out, "    Err(format!(\"invalid AccountId: {{}}\", raw))").unwrap();
+    writeln!(out, "    spel_framework_core::pda::parse_bytes32(s).map(AccountId::new)").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
-
-    // parse_bytes32 — same inputs as parse_account_id but returns the raw [u8; 32].
-    // Used for IDL fields typed [u8; 32] (PDA seed bytes, keys stored as raw arrays).
     writeln!(out, "fn parse_bytes32(s: &str) -> Result<[u8; 32], String> {{").unwrap();
-    writeln!(out, "    let raw = s;").unwrap();
-    writeln!(out, "    let s = s.strip_prefix(\"Public/\").or_else(|| s.strip_prefix(\"Private/\")).unwrap_or(s);").unwrap();
-    writeln!(out, "    let s = s.trim_start_matches(\"0x\");").unwrap();
-    writeln!(out, "    if s.len() == 64 {{").unwrap();
-    writeln!(out, "        let bytes = hex::decode(s).map_err(|e| format!(\"invalid hex: {{}}\", e))?;").unwrap();
-    writeln!(out, "        let mut arr = [0u8; 32]; arr.copy_from_slice(&bytes);").unwrap();
-    writeln!(out, "        return Ok(arr);").unwrap();
-    writeln!(out, "    }}").unwrap();
-    writeln!(out, "    if let Ok(id) = s.parse::<AccountId>() {{").unwrap();
-    writeln!(out, "        let mut arr = [0u8; 32]; arr.copy_from_slice(id.as_ref());").unwrap();
-    writeln!(out, "        return Ok(arr);").unwrap();
-    writeln!(out, "    }}").unwrap();
-    writeln!(out, "    Err(format!(\"invalid [u8; 32]: {{}}\", raw))").unwrap();
+    writeln!(out, "    spel_framework_core::pda::parse_bytes32(s)").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
