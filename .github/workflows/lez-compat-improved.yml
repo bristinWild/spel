@@ -366,7 +366,6 @@ jobs:
 
       - name: Create issue on failure
         if: false  # Issues disabled on this fork
-        if: steps.cargo-check.outputs.status == 'failed'
         uses: actions/github-script@v7
         with:
           script: |
