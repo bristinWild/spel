@@ -3,9 +3,9 @@
 //! Generates: XyzBackend.h/.cpp, XyzPlugin.h/.cpp, src/main.cpp,
 //!            qml/Main.qml, module.yaml, manifest.json
 
+use crate::util::*;
 use spel_framework_core::idl::*;
 use std::collections::HashSet;
-use crate::util::*;
 
 pub struct LogosModuleOutput {
     pub backend_h: String,
@@ -32,8 +32,8 @@ pub fn generate_logos_module(
         .unwrap_or_else(|| snake_case(&idl.name));
     let class = pascal_case(&effective_prog);
     let prog = snake_case(&idl.name); // FFI symbol prefix (from IDL, unchanged)
-    // Strip trailing _program/_contract before building the env-var prefix so
-    // "multisig_program" → "MULTISIG" not "MULTISIG_PROGRAM" → doubled suffix.
+                                      // Strip trailing _program/_contract before building the env-var prefix so
+                                      // "multisig_program" → "MULTISIG" not "MULTISIG_PROGRAM" → doubled suffix.
     let env_base = effective_prog
         .trim_end_matches("_program")
         .trim_end_matches("_contract")
@@ -96,7 +96,11 @@ fn enum_variants<'a>(ty: &IdlType, idl: &'a SpelIdl) -> Option<Vec<&'a str>> {
         other => other,
     };
     if let IdlType::Defined { defined } = inner {
-        if let Some(def) = idl.types.iter().find(|t| &t.name == defined && t.kind == "enum") {
+        if let Some(def) = idl
+            .types
+            .iter()
+            .find(|t| &t.name == defined && t.kind == "enum")
+        {
             if !def.variants.is_empty() {
                 return Some(def.variants.iter().map(|v| v.name.as_str()).collect());
             }
@@ -116,9 +120,7 @@ fn type_placeholder(ty: &IdlType) -> &'static str {
             "bool" | "string" | "String" => "",
             _ => "value",
         },
-        IdlType::Array { array: (elem, 32) }
-            if matches!(elem.as_ref(), IdlType::Primitive(p) if p == "u8") =>
-        {
+        IdlType::Array { array: (elem, 32) } if matches!(elem.as_ref(), IdlType::Primitive(p) if p == "u8") => {
             "base58 or 0x… hex"
         }
         IdlType::Option { option } => type_placeholder(option),
@@ -130,10 +132,10 @@ fn type_placeholder(ty: &IdlType) -> &'static str {
 fn validator_str(ty: &IdlType) -> Option<&'static str> {
     if let IdlType::Primitive(p) = ty {
         match p.as_str() {
-            "u8"  => Some("IntValidator { bottom: 0; top: 255 }"),
+            "u8" => Some("IntValidator { bottom: 0; top: 255 }"),
             "u16" => Some("IntValidator { bottom: 0; top: 65535 }"),
             "u32" => Some("IntValidator { bottom: 0; top: 2147483647 }"),
-            "i8"  => Some("IntValidator { bottom: -128; top: 127 }"),
+            "i8" => Some("IntValidator { bottom: -128; top: 127 }"),
             "i16" => Some("IntValidator { bottom: -32768; top: 32767 }"),
             "i32" => Some("IntValidator { bottom: -2147483648; top: 2147483647 }"),
             _ => None,
@@ -236,7 +238,10 @@ fn fetch_eligible_accounts(idl: &SpelIdl) -> Vec<FetchAccount> {
                 })
                 .collect();
 
-            result.push(FetchAccount { acc_name, seed_params });
+            result.push(FetchAccount {
+                acc_name,
+                seed_params,
+            });
         }
     }
     result
@@ -409,7 +414,9 @@ fn gen_backend_h(
     o.push_str("    Q_OBJECT\n\n");
 
     if !fetches.is_empty() {
-        o.push_str("    // ── Fetched state ─────────────────────────────────────────────────────\n");
+        o.push_str(
+            "    // ── Fetched state ─────────────────────────────────────────────────────\n",
+        );
         for f in fetches {
             let p = camel_case(&f.acc_name);
             o.push_str(&format!(
@@ -423,7 +430,9 @@ fn gen_backend_h(
     o.push_str("    Q_PROPERTY(bool       busy       READ busy       NOTIFY busyChanged)\n");
     o.push_str("    Q_PROPERTY(QString    lastError  READ lastError  NOTIFY lastErrorChanged)\n");
     o.push_str("    Q_PROPERTY(QString    lastTxHash READ lastTxHash NOTIFY lastTxHashChanged)\n");
-    o.push_str("    Q_PROPERTY(QVariantMap lastResult READ lastResult NOTIFY lastResultChanged)\n\n");
+    o.push_str(
+        "    Q_PROPERTY(QVariantMap lastResult READ lastResult NOTIFY lastResultChanged)\n\n",
+    );
     o.push_str("    // ── Configuration ────────────────────────────────────────────────────\n");
     o.push_str("    Q_PROPERTY(QString walletPath   READ walletPath   WRITE setWalletPath   NOTIFY walletPathChanged)\n");
     o.push_str("    Q_PROPERTY(QString sequencerUrl READ sequencerUrl WRITE setSequencerUrl NOTIFY sequencerUrlChanged)\n");
@@ -458,7 +467,9 @@ fn gen_backend_h(
     o.push_str("    QString     connectionStatus()  const { return m_connectionStatus; }\n");
     o.push_str("    QVariantList walletAccounts()    const { return m_walletAccounts; }\n");
     o.push_str("    QVariantMap walletAccountInfo() const { return m_walletAccountInfo; }\n");
-    o.push_str("    QVariantMap walletDecodedAccount() const { return m_walletDecodedAccount; }\n\n");
+    o.push_str(
+        "    QVariantMap walletDecodedAccount() const { return m_walletDecodedAccount; }\n\n",
+    );
 
     o.push_str("    QString walletPath()   const { return m_walletPath; }\n");
     o.push_str("    QString sequencerUrl() const { return m_sequencerUrl; }\n");
@@ -483,7 +494,9 @@ fn gen_backend_h(
     o.push('\n');
 
     if !fetches.is_empty() {
-        o.push_str("    // ── Fetch ─────────────────────────────────────────────────────────────\n");
+        o.push_str(
+            "    // ── Fetch ─────────────────────────────────────────────────────────────\n",
+        );
         for f in fetches {
             let method = format!("fetch{}", pascal_case(&f.acc_name));
             let ps = f
@@ -504,7 +517,9 @@ fn gen_backend_h(
     o.push_str("    Q_INVOKABLE void inspectAccount(const QString& accountId);\n");
     o.push_str("    Q_INVOKABLE void decodeAccount(const QString& accountId);\n");
     o.push_str("    Q_INVOKABLE QStringList fieldHistory(const QString& key) const;\n");
-    o.push_str("    Q_INVOKABLE void        saveHistory(const QString& key, const QString& value);\n\n");
+    o.push_str(
+        "    Q_INVOKABLE void        saveHistory(const QString& key, const QString& value);\n\n",
+    );
     o.push_str("signals:\n");
     for f in fetches {
         let p = camel_case(&f.acc_name);
@@ -579,8 +594,10 @@ fn gen_backend_cpp(
     let backend = format!("{class}Backend");
 
     // No-arg fetches for autoRefresh
-    let no_arg_fetches: Vec<&FetchAccount> =
-        fetches.iter().filter(|f| f.seed_params.is_empty()).collect();
+    let no_arg_fetches: Vec<&FetchAccount> = fetches
+        .iter()
+        .filter(|f| f.seed_params.is_empty())
+        .collect();
     let has_no_arg_fetches = !no_arg_fetches.is_empty();
 
     o.push_str("// Auto-generated by spel-client-gen --target logos-module. DO NOT EDIT.\n");
@@ -608,18 +625,32 @@ fn gen_backend_cpp(
     }
     o.push_str(&format!("    char* {effective_prog}_program_id();\n"));
     o.push_str(&format!("    void  {prog}_free_string(char* s);\n"));
-    o.push_str(&format!("    char* {prog}_check_connection(const char* args_json);\n"));
-    o.push_str(&format!("    char* {prog}_inspect_account(const char* args_json);\n"));
-    o.push_str(&format!("    char* {prog}_list_accounts(const char* args_json);\n"));
-    o.push_str(&format!("    char* {prog}_create_account(const char* args_json);\n"));
-    o.push_str(&format!("    char* {prog}_decode_account(const char* args_json);\n"));
+    o.push_str(&format!(
+        "    char* {prog}_check_connection(const char* args_json);\n"
+    ));
+    o.push_str(&format!(
+        "    char* {prog}_inspect_account(const char* args_json);\n"
+    ));
+    o.push_str(&format!(
+        "    char* {prog}_list_accounts(const char* args_json);\n"
+    ));
+    o.push_str(&format!(
+        "    char* {prog}_create_account(const char* args_json);\n"
+    ));
+    o.push_str(&format!(
+        "    char* {prog}_decode_account(const char* args_json);\n"
+    ));
     o.push_str("}\n\n");
 
     // Constructor
     o.push_str("// ── Construction ──────────────────────────────────────────────────────────\n\n");
-    o.push_str(&format!("{backend}::{backend}(LogosAPI* /*api*/, QObject* parent)\n"));
+    o.push_str(&format!(
+        "{backend}::{backend}(LogosAPI* /*api*/, QObject* parent)\n"
+    ));
     o.push_str("    : QObject(parent)\n{\n");
-    o.push_str(&format!("    QSettings s(\"logos-co\", \"{effective_prog}\");\n"));
+    o.push_str(&format!(
+        "    QSettings s(\"logos-co\", \"{effective_prog}\");\n"
+    ));
     o.push_str("    m_walletPath   = s.value(\"walletPath\",   qEnvironmentVariable(\"NSSA_WALLET_HOME_DIR\",  \".scaffold/wallet\")).toString();\n");
     o.push_str("    m_sequencerUrl = s.value(\"sequencerUrl\", qEnvironmentVariable(\"NSSA_SEQUENCER_URL\",   \"http://127.0.0.1:3040\")).toString();\n");
     o.push_str(&format!(
@@ -627,10 +658,14 @@ fn gen_backend_cpp(
     ));
     // Fallback: call the compiled-in FFI constant if still empty (priority 3)
     o.push_str(&format!("    if (m_programIdHex.isEmpty()) {{\n"));
-    o.push_str(&format!("        char* raw = {effective_prog}_program_id();\n"));
+    o.push_str(&format!(
+        "        char* raw = {effective_prog}_program_id();\n"
+    ));
     o.push_str("        if (raw) {\n");
     o.push_str("            m_programIdHex = QJsonDocument::fromJson(QByteArray(raw))\n");
-    o.push_str("                                 .object().value(\"program_id_hex\").toString();\n");
+    o.push_str(
+        "                                 .object().value(\"program_id_hex\").toString();\n",
+    );
     o.push_str(&format!("            {prog}_free_string(raw);\n"));
     o.push_str("        }\n");
     o.push_str("    }\n");
@@ -643,14 +678,31 @@ fn gen_backend_cpp(
     // Configuration setters (QSettings-backed, priority: QSettings > env var)
     o.push_str("// ── Configuration ────────────────────────────────────────────────────────\n\n");
     for (field, method, key, signal) in [
-        ("m_walletPath",   "setWalletPath",   "walletPath",   "walletPathChanged"),
-        ("m_sequencerUrl", "setSequencerUrl", "sequencerUrl", "sequencerUrlChanged"),
-        ("m_programIdHex", "setProgramIdHex", "programIdHex", "programIdHexChanged"),
+        (
+            "m_walletPath",
+            "setWalletPath",
+            "walletPath",
+            "walletPathChanged",
+        ),
+        (
+            "m_sequencerUrl",
+            "setSequencerUrl",
+            "sequencerUrl",
+            "sequencerUrlChanged",
+        ),
+        (
+            "m_programIdHex",
+            "setProgramIdHex",
+            "programIdHex",
+            "programIdHexChanged",
+        ),
     ] {
         o.push_str(&format!("void {backend}::{method}(const QString& v) {{\n"));
         o.push_str(&format!("    if ({field} == v) return;\n"));
         o.push_str(&format!("    {field} = v;\n"));
-        o.push_str(&format!("    QSettings(\"logos-co\", \"{effective_prog}\").setValue(\"{key}\", v);\n"));
+        o.push_str(&format!(
+            "    QSettings(\"logos-co\", \"{effective_prog}\").setValue(\"{key}\", v);\n"
+        ));
         o.push_str(&format!("    emit {signal}();\n"));
         if method == "setWalletPath" {
             o.push_str("    if (!v.isEmpty()) listAccounts();\n");
@@ -760,7 +812,9 @@ fn gen_backend_cpp(
 
     // Fetch methods
     if !fetches.is_empty() {
-        o.push_str("// ── Fetch ────────────────────────────────────────────────────────────────\n\n");
+        o.push_str(
+            "// ── Fetch ────────────────────────────────────────────────────────────────\n\n",
+        );
         for f in fetches {
             let method = format!("fetch{}", pascal_case(&f.acc_name));
             let prop = camel_case(&f.acc_name);
@@ -789,7 +843,9 @@ fn gen_backend_cpp(
             o.push_str(
                 "            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n",
             );
-            o.push_str("            if (obj.value(\"success\").toBool() && obj.contains(\"state\")) {\n");
+            o.push_str(
+                "            if (obj.value(\"success\").toBool() && obj.contains(\"state\")) {\n",
+            );
             o.push_str(&format!(
                 "                m_{prop} = obj.value(\"state\").toObject().toVariantMap();\n"
             ));
@@ -805,9 +861,13 @@ fn gen_backend_cpp(
     o.push_str(&format!("void {backend}::checkConnection() {{\n"));
     o.push_str("    QJsonObject args = baseArgs();\n");
     o.push_str("    QThreadPool::globalInstance()->start([this, args]() {\n");
-    o.push_str(&format!("        QString result = callFfi({prog}_check_connection, args);\n"));
+    o.push_str(&format!(
+        "        QString result = callFfi({prog}_check_connection, args);\n"
+    ));
     o.push_str("        QMetaObject::invokeMethod(this, [this, result]() {\n");
-    o.push_str("            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n");
+    o.push_str(
+        "            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n",
+    );
     o.push_str("            if (obj.value(\"success\").toBool()) {\n");
     o.push_str("                m_connectionStatus = \"\\u2713 \" + obj.value(\"sequencer_url\").toString();\n");
     o.push_str("            } else {\n");
@@ -821,9 +881,13 @@ fn gen_backend_cpp(
     o.push_str("    QJsonObject args = baseArgs();\n");
     o.push_str("    args[\"program_id_hex\"] = m_programIdHex;\n");
     o.push_str("    QThreadPool::globalInstance()->start([this, args]() {\n");
-    o.push_str(&format!("        QString result = callFfi({prog}_list_accounts, args);\n"));
+    o.push_str(&format!(
+        "        QString result = callFfi({prog}_list_accounts, args);\n"
+    ));
     o.push_str("        QMetaObject::invokeMethod(this, [this, result]() {\n");
-    o.push_str("            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n");
+    o.push_str(
+        "            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n",
+    );
     o.push_str("            if (obj.value(\"success\").toBool()) {\n");
     o.push_str("                QVariantList list;\n");
     o.push_str("                for (const QJsonValue& v : obj.value(\"accounts\").toArray()) {\n");
@@ -844,13 +908,19 @@ fn gen_backend_cpp(
     o.push_str("        }, Qt::QueuedConnection);\n");
     o.push_str("    });\n}\n\n");
 
-    o.push_str(&format!("void {backend}::createAccount(const QString& label) {{\n"));
+    o.push_str(&format!(
+        "void {backend}::createAccount(const QString& label) {{\n"
+    ));
     o.push_str("    QJsonObject args = baseArgs();\n");
     o.push_str("    if (!label.isEmpty()) args[\"label\"] = label;\n");
     o.push_str("    QThreadPool::globalInstance()->start([this, args]() {\n");
-    o.push_str(&format!("        QString result = callFfi({prog}_create_account, args);\n"));
+    o.push_str(&format!(
+        "        QString result = callFfi({prog}_create_account, args);\n"
+    ));
     o.push_str("        QMetaObject::invokeMethod(this, [this, result]() {\n");
-    o.push_str("            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n");
+    o.push_str(
+        "            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n",
+    );
     o.push_str("            if (obj.value(\"success\").toBool()) {\n");
     o.push_str("                QString newId = obj.value(\"account_id\").toString();\n");
     o.push_str("                emit operationSuccess(\"create_account\", newId);\n");
@@ -863,21 +933,31 @@ fn gen_backend_cpp(
     o.push_str("        }, Qt::QueuedConnection);\n");
     o.push_str("    });\n}\n\n");
 
-    o.push_str(&format!("void {backend}::inspectAccount(const QString& accountId) {{\n"));
+    o.push_str(&format!(
+        "void {backend}::inspectAccount(const QString& accountId) {{\n"
+    ));
     o.push_str("    QJsonObject args = baseArgs();\n");
     o.push_str("    args[\"account_id\"] = accountId;\n");
     // pass program_id_hex so the FFI can classify owner status
     o.push_str("    args[\"program_id_hex\"] = m_programIdHex;\n");
     o.push_str("    QThreadPool::globalInstance()->start([this, args]() {\n");
-    o.push_str(&format!("        QString result = callFfi({prog}_inspect_account, args);\n"));
+    o.push_str(&format!(
+        "        QString result = callFfi({prog}_inspect_account, args);\n"
+    ));
     o.push_str("        QMetaObject::invokeMethod(this, [this, result]() {\n");
-    o.push_str("            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n");
+    o.push_str(
+        "            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n",
+    );
     o.push_str("            if (obj.value(\"success\").toBool()) {\n");
     o.push_str("                QVariantMap info;\n");
     o.push_str("                info[\"status\"]          = obj.value(\"status\").toString();\n");
     o.push_str("                info[\"data_len\"]        = obj.value(\"data_len\").toInt();\n");
-    o.push_str("                info[\"data_preview\"]    = obj.value(\"data_preview\").toString();\n");
-    o.push_str("                info[\"program_owner\"]   = obj.value(\"program_owner\").toString();\n");
+    o.push_str(
+        "                info[\"data_preview\"]    = obj.value(\"data_preview\").toString();\n",
+    );
+    o.push_str(
+        "                info[\"program_owner\"]   = obj.value(\"program_owner\").toString();\n",
+    );
     o.push_str("                info[\"has_signing_key\"] = obj.value(\"has_signing_key\").toBool() ? \"yes\" : \"no\";\n");
     o.push_str("                m_walletAccountInfo = info;\n");
     o.push_str("            } else {\n");
@@ -889,13 +969,19 @@ fn gen_backend_cpp(
     o.push_str("        }, Qt::QueuedConnection);\n");
     o.push_str("    });\n}\n\n");
 
-    o.push_str(&format!("void {backend}::decodeAccount(const QString& accountId) {{\n"));
+    o.push_str(&format!(
+        "void {backend}::decodeAccount(const QString& accountId) {{\n"
+    ));
     o.push_str("    QJsonObject args = baseArgs();\n");
     o.push_str("    args[\"account_id\"] = accountId;\n");
     o.push_str("    QThreadPool::globalInstance()->start([this, args]() {\n");
-    o.push_str(&format!("        QString result = callFfi({prog}_decode_account, args);\n"));
+    o.push_str(&format!(
+        "        QString result = callFfi({prog}_decode_account, args);\n"
+    ));
     o.push_str("        QMetaObject::invokeMethod(this, [this, result]() {\n");
-    o.push_str("            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n");
+    o.push_str(
+        "            QJsonObject obj = QJsonDocument::fromJson(result.toUtf8()).object();\n",
+    );
     o.push_str("            if (obj.value(\"success\").toBool()) {\n");
     o.push_str("                QVariantMap decoded;\n");
     o.push_str("                decoded[\"type\"] = obj.value(\"type\").toString();\n");
@@ -920,13 +1006,21 @@ fn gen_backend_cpp(
 
     // ── Field history ─────────────────────────────────────────────────────────
     o.push_str("// ── Field history ────────────────────────────────────────────────────────\n\n");
-    o.push_str(&format!("QStringList {backend}::fieldHistory(const QString& key) const {{\n"));
-    o.push_str(&format!("    return QSettings(\"logos-co\", \"{effective_prog}\")\n"));
+    o.push_str(&format!(
+        "QStringList {backend}::fieldHistory(const QString& key) const {{\n"
+    ));
+    o.push_str(&format!(
+        "    return QSettings(\"logos-co\", \"{effective_prog}\")\n"
+    ));
     o.push_str("               .value(\"history/\" + key, QStringList{}).toStringList();\n");
     o.push_str("}\n\n");
-    o.push_str(&format!("void {backend}::saveHistory(const QString& key, const QString& value) {{\n"));
+    o.push_str(&format!(
+        "void {backend}::saveHistory(const QString& key, const QString& value) {{\n"
+    ));
     o.push_str("    if (value.trimmed().isEmpty()) return;\n");
-    o.push_str(&format!("    QSettings s(\"logos-co\", \"{effective_prog}\");\n"));
+    o.push_str(&format!(
+        "    QSettings s(\"logos-co\", \"{effective_prog}\");\n"
+    ));
     o.push_str("    QStringList h = s.value(\"history/\" + key, QStringList{}).toStringList();\n");
     o.push_str("    h.removeAll(value);\n");
     o.push_str("    h.prepend(value);\n");
@@ -1100,7 +1194,9 @@ fn gen_main_qml(idl: &SpelIdl, fetches: &[FetchAccount], effective_prog: &str) -
     o.push_str("            toast.show(\"\\u2713 \" + operation + (txHash ? \" \\u00b7 \" + txHash.slice(0, 12) + \"\\u2026\" : \"\"), root.colSuccess, 4000)\n");
     o.push_str("        }\n");
     o.push_str("        function onOperationError(operation, error) {\n");
-    o.push_str("            toast.show(\"\\u2717 \" + operation + \": \" + error, root.colError, 7000)\n");
+    o.push_str(
+        "            toast.show(\"\\u2717 \" + operation + \": \" + error, root.colError, 7000)\n",
+    );
     o.push_str("        }\n");
     o.push_str("    }\n\n");
 
@@ -1113,7 +1209,9 @@ fn gen_main_qml(idl: &SpelIdl, fetches: &[FetchAccount], effective_prog: &str) -
     o.push_str("        // ── Sidebar ──────────────────────────────────────────────────────\n");
     o.push_str("        Rectangle {\n");
     o.push_str("            id: sidebar\n");
-    o.push_str("            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }\n");
+    o.push_str(
+        "            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }\n",
+    );
     o.push_str("            width: 200\n");
     o.push_str("            color: root.colSidebar\n\n");
     o.push_str("            ColumnLayout {\n");
@@ -1139,11 +1237,17 @@ fn gen_main_qml(idl: &SpelIdl, fetches: &[FetchAccount], effective_prog: &str) -
     o.push_str("                                width: 5; height: 5; radius: 2.5\n");
     o.push_str("                                color: root.colPrimary\n");
     o.push_str("                                SequentialAnimation on opacity {\n");
-    o.push_str("                                    running: backend.busy; loops: Animation.Infinite\n");
+    o.push_str(
+        "                                    running: backend.busy; loops: Animation.Infinite\n",
+    );
     o.push_str("                                    PauseAnimation   { duration: index * 200 }\n");
     o.push_str("                                    NumberAnimation  { to: 1.0; duration: 200 }\n");
-    o.push_str("                                    NumberAnimation  { to: 0.25; duration: 200 }\n");
-    o.push_str("                                    PauseAnimation   { duration: (2 - index) * 200 }\n");
+    o.push_str(
+        "                                    NumberAnimation  { to: 0.25; duration: 200 }\n",
+    );
+    o.push_str(
+        "                                    PauseAnimation   { duration: (2 - index) * 200 }\n",
+    );
     o.push_str("                                }\n");
     o.push_str("                            }\n");
     o.push_str("                        }\n");
@@ -1165,13 +1269,19 @@ fn gen_main_qml(idl: &SpelIdl, fetches: &[FetchAccount], effective_prog: &str) -
         o.push_str("                        ItemDelegate {\n");
         o.push_str("                            width: sidebar.width\n");
         o.push_str("                            height: 40\n");
-        o.push_str(&format!("                            onClicked: root.currentPageIndex = {page_idx}\n"));
+        o.push_str(&format!(
+            "                            onClicked: root.currentPageIndex = {page_idx}\n"
+        ));
         o.push_str("                            background: Rectangle {\n");
-        o.push_str(&format!("                                color: root.currentPageIndex === {page_idx}\n"));
+        o.push_str(&format!(
+            "                                color: root.currentPageIndex === {page_idx}\n"
+        ));
         o.push_str("                                       ? Qt.rgba(0.49, 0.43, 0.96, 0.15) : \"transparent\"\n");
         o.push_str("                            }\n");
         o.push_str("                            contentItem: Text {\n");
-        o.push_str(&format!("                                text: \"{label}\"\n"));
+        o.push_str(&format!(
+            "                                text: \"{label}\"\n"
+        ));
         o.push_str(&format!("                                color: root.currentPageIndex === {page_idx} ? root.colPrimary : root.colText\n"));
         o.push_str("                                font.pixelSize: 13\n");
         o.push_str("                                leftPadding: 16\n");
@@ -1181,7 +1291,9 @@ fn gen_main_qml(idl: &SpelIdl, fetches: &[FetchAccount], effective_prog: &str) -
     };
     let emit_section_label = |o: &mut String, text: &str| {
         o.push_str(&format!("                        Text {{\n"));
-        o.push_str(&format!("                            x: 12; width: sidebar.width - 12; height: 28\n"));
+        o.push_str(&format!(
+            "                            x: 12; width: sidebar.width - 12; height: 28\n"
+        ));
         o.push_str(&format!("                            text: \"{text}\"\n"));
         o.push_str("                            color: root.colMuted\n");
         o.push_str("                            font.pixelSize: 10\n");
@@ -1226,10 +1338,10 @@ fn gen_main_qml(idl: &SpelIdl, fetches: &[FetchAccount], effective_prog: &str) -
     emit_section_label(&mut o, "SETTINGS");
     emit_nav_item(&mut o, "Settings", settings_idx);
 
-    o.push_str("                    }\n");   // Column
-    o.push_str("                }\n");       // ScrollView
-    o.push_str("            }\n");           // ColumnLayout
-    o.push_str("        }\n\n");            // Rectangle#sidebar
+    o.push_str("                    }\n"); // Column
+    o.push_str("                }\n"); // ScrollView
+    o.push_str("            }\n"); // ColumnLayout
+    o.push_str("        }\n\n"); // Rectangle#sidebar
 
     // ── Content pages ──────────────────────────────────────────────────────────
     o.push_str("        // ── Content pages ────────────────────────────────────────────────\n");
@@ -1247,7 +1359,7 @@ fn gen_main_qml(idl: &SpelIdl, fetches: &[FetchAccount], effective_prog: &str) -
     qml_wallet_page(&mut o);
     qml_settings_page(&mut o);
 
-    o.push_str("        }\n\n");    // StackLayout
+    o.push_str("        }\n\n"); // StackLayout
 
     qml_toast(&mut o);
 
@@ -1280,21 +1392,29 @@ fn qml_option_label_row(o: &mut String, field_id: &str, label: &str, ind: &str) 
     o.push_str(&format!("{ind}            RowLayout {{\n"));
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}                Layout.fillWidth: true\n"));
-    o.push_str(&format!("{ind}                CheckBox {{ id: {field_id}_enabled; checked: false }}\n"));
+    o.push_str(&format!(
+        "{ind}                CheckBox {{ id: {field_id}_enabled; checked: false }}\n"
+    ));
     o.push_str(&format!("{ind}                Text {{\n"));
-    o.push_str(&format!("{ind}                    text: \"{label} (optional)\"\n"));
+    o.push_str(&format!(
+        "{ind}                    text: \"{label} (optional)\"\n"
+    ));
     o.push_str(&format!("{ind}                    color: root.colMuted\n"));
     o.push_str(&format!("{ind}                    font.pixelSize: 11\n"));
-    o.push_str(&format!("{ind}                    verticalAlignment: Text.AlignVCenter\n"));
+    o.push_str(&format!(
+        "{ind}                    verticalAlignment: Text.AlignVCenter\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}            }}\n"));
 }
 
 /// ComboBox populated from known enum variants; optional enable-gating.
-fn qml_combobox(
-    o: &mut String, id: &str, variants: &[&str], is_opt: bool, ind: &str,
-) {
-    let model = variants.iter().map(|v| format!("\"{v}\"")).collect::<Vec<_>>().join(", ");
+fn qml_combobox(o: &mut String, id: &str, variants: &[&str], is_opt: bool, ind: &str) {
+    let model = variants
+        .iter()
+        .map(|v| format!("\"{v}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     o.push_str(&format!("{ind}            ComboBox {{\n"));
     o.push_str(&format!("{ind}                id: {id}\n"));
     o.push_str(&format!("{ind}                model: [{model}]\n"));
@@ -1302,8 +1422,12 @@ fn qml_combobox(
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}                Layout.rightMargin: 24\n"));
     if is_opt {
-        o.push_str(&format!("{ind}                enabled: {id}_enabled.checked\n"));
-        o.push_str(&format!("{ind}                opacity: enabled ? 1.0 : 0.4\n"));
+        o.push_str(&format!(
+            "{ind}                enabled: {id}_enabled.checked\n"
+        ));
+        o.push_str(&format!(
+            "{ind}                opacity: enabled ? 1.0 : 0.4\n"
+        ));
     }
     o.push_str(&format!("{ind}            }}\n\n"));
 }
@@ -1315,14 +1439,24 @@ fn qml_textfield_page(o: &mut String, id: &str, placeholder: &str, ind: &str) {
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}                Layout.rightMargin: 24\n"));
     if !placeholder.is_empty() {
-        o.push_str(&format!("{ind}                placeholderText: \"{placeholder}\"\n"));
+        o.push_str(&format!(
+            "{ind}                placeholderText: \"{placeholder}\"\n"
+        ));
     }
     o.push_str(&format!("{ind}                color: root.colText\n"));
-    o.push_str(&format!("{ind}                placeholderTextColor: root.colMuted\n"));
+    o.push_str(&format!(
+        "{ind}                placeholderTextColor: root.colMuted\n"
+    ));
     o.push_str(&format!("{ind}                background: Rectangle {{\n"));
-    o.push_str(&format!("{ind}                    color: root.colSurface\n"));
-    o.push_str(&format!("{ind}                    border.color: root.colBorder\n"));
-    o.push_str(&format!("{ind}                    radius: root.radius / 2\n"));
+    o.push_str(&format!(
+        "{ind}                    color: root.colSurface\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    border.color: root.colBorder\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    radius: root.radius / 2\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 }
@@ -1338,14 +1472,28 @@ fn qml_account_picker(o: &mut String, id: &str, hist_key: &str, ind: &str) {
     o.push_str(&format!("{ind}                Layout.rightMargin: 24\n"));
     o.push_str(&format!("{ind}                TextField {{\n"));
     o.push_str(&format!("{ind}                    id: {id}\n"));
-    o.push_str(&format!("{ind}                    Layout.fillWidth: true\n"));
-    o.push_str(&format!("{ind}                    placeholderText: \"base58 or 0x… hex\"\n"));
+    o.push_str(&format!(
+        "{ind}                    Layout.fillWidth: true\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    placeholderText: \"base58 or 0x… hex\"\n"
+    ));
     o.push_str(&format!("{ind}                    color: root.colText\n"));
-    o.push_str(&format!("{ind}                    placeholderTextColor: root.colMuted\n"));
-    o.push_str(&format!("{ind}                    background: Rectangle {{\n"));
-    o.push_str(&format!("{ind}                        color: root.colSurface\n"));
-    o.push_str(&format!("{ind}                        border.color: root.colBorder\n"));
-    o.push_str(&format!("{ind}                        radius: root.radius / 2\n"));
+    o.push_str(&format!(
+        "{ind}                    placeholderTextColor: root.colMuted\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    background: Rectangle {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        color: root.colSurface\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        border.color: root.colBorder\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        radius: root.radius / 2\n"
+    ));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    onEditingFinished: if (text.trim() !== \"\") backend.saveHistory(\"{hist_key}\", text.trim())\n"));
     o.push_str(&format!("{ind}                }}\n"));
@@ -1353,45 +1501,75 @@ fn qml_account_picker(o: &mut String, id: &str, hist_key: &str, ind: &str) {
     o.push_str(&format!("{ind}                Button {{\n"));
     o.push_str(&format!("{ind}                    id: {id}Btn\n"));
     o.push_str(&format!("{ind}                    implicitWidth: 28\n"));
-    o.push_str(&format!("{ind}                    implicitHeight: {id}.implicitHeight\n"));
+    o.push_str(&format!(
+        "{ind}                    implicitHeight: {id}.implicitHeight\n"
+    ));
     o.push_str(&format!("{ind}                    text: \"\\u25be\"\n")); // ▾
     o.push_str(&format!("{ind}                    background: Rectangle {{ color: root.colSurface; border.color: root.colBorder; radius: root.radius / 2 }}\n"));
     o.push_str(&format!("{ind}                    contentItem: Text {{ text: parent.text; color: root.colMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }}\n"));
-    o.push_str(&format!("{ind}                    onClicked: {popup}.open()\n"));
+    o.push_str(&format!(
+        "{ind}                    onClicked: {popup}.open()\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     // Popup — padding:0 so Column.width === popup.width
     o.push_str(&format!("{ind}                Popup {{\n"));
     o.push_str(&format!("{ind}                    id: {popup}\n"));
-    o.push_str(&format!("{ind}                    y: parent.height; x: 0\n"));
+    o.push_str(&format!(
+        "{ind}                    y: parent.height; x: 0\n"
+    ));
     o.push_str(&format!("{ind}                    width: parent.width\n"));
     o.push_str(&format!("{ind}                    padding: 0\n"));
-    o.push_str(&format!("{ind}                    property var recentHistory: []\n"));
+    o.push_str(&format!(
+        "{ind}                    property var recentHistory: []\n"
+    ));
     o.push_str(&format!("{ind}                    onAboutToShow: recentHistory = backend.fieldHistory(\"{hist_key}\")\n"));
     o.push_str(&format!("{ind}                    background: Rectangle {{ color: root.colSidebar; border.color: root.colBorder; radius: root.radius / 2 }}\n"));
     // Column is a direct child — avoids contentItem width resolution issues
     o.push_str(&format!("{ind}                    Column {{\n"));
-    o.push_str(&format!("{ind}                        width: parent.width\n"));
+    o.push_str(&format!(
+        "{ind}                        width: parent.width\n"
+    ));
     o.push_str(&format!("{ind}                        spacing: 0\n"));
-    o.push_str(&format!("{ind}                        topPadding: 4; bottomPadding: 4\n"));
+    o.push_str(&format!(
+        "{ind}                        topPadding: 4; bottomPadding: 4\n"
+    ));
     // RECENT section (first — most immediately useful)
     o.push_str(&format!("{ind}                        Text {{\n"));
-    o.push_str(&format!("{ind}                            text: \"RECENT\"\n"));
-    o.push_str(&format!("{ind}                            visible: {popup}.recentHistory.length > 0\n"));
+    o.push_str(&format!(
+        "{ind}                            text: \"RECENT\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            visible: {popup}.recentHistory.length > 0\n"
+    ));
     o.push_str(&format!("{ind}                            color: root.colMuted; font.pixelSize: 10; font.bold: true\n"));
     o.push_str(&format!("{ind}                            leftPadding: 8; topPadding: 2; bottomPadding: 2; width: parent.width\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                        Repeater {{\n"));
-    o.push_str(&format!("{ind}                            model: {popup}.recentHistory\n"));
-    o.push_str(&format!("{ind}                            delegate: Rectangle {{\n"));
-    o.push_str(&format!("{ind}                                width: parent.width; height: 34\n"));
+    o.push_str(&format!(
+        "{ind}                            model: {popup}.recentHistory\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            delegate: Rectangle {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                width: parent.width; height: 34\n"
+    ));
     o.push_str(&format!("{ind}                                color: _ma.containsMouse ? root.colSurface : \"transparent\"\n"));
     o.push_str(&format!("{ind}                                Text {{\n"));
-    o.push_str(&format!("{ind}                                    anchors.verticalCenter: parent.verticalCenter\n"));
-    o.push_str(&format!("{ind}                                    x: 8; width: parent.width - 8\n"));
+    o.push_str(&format!(
+        "{ind}                                    anchors.verticalCenter: parent.verticalCenter\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                    x: 8; width: parent.width - 8\n"
+    ));
     o.push_str(&format!("{ind}                                    text: modelData; color: root.colText; elide: Text.ElideMiddle; font.pixelSize: 13\n"));
     o.push_str(&format!("{ind}                                }}\n"));
-    o.push_str(&format!("{ind}                                MouseArea {{\n"));
-    o.push_str(&format!("{ind}                                    id: _ma; anchors.fill: parent\n"));
+    o.push_str(&format!(
+        "{ind}                                MouseArea {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                    id: _ma; anchors.fill: parent\n"
+    ));
     o.push_str(&format!("{ind}                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor\n"));
     o.push_str(&format!("{ind}                                    onClicked: {{ {id}.text = modelData; {popup}.close() }}\n"));
     o.push_str(&format!("{ind}                                }}\n"));
@@ -1399,31 +1577,53 @@ fn qml_account_picker(o: &mut String, id: &str, hist_key: &str, ind: &str) {
     o.push_str(&format!("{ind}                        }}\n"));
     // Separator
     o.push_str(&format!("{ind}                        Rectangle {{\n"));
-    o.push_str(&format!("{ind}                            width: parent.width; height: 1; color: root.colBorder\n"));
+    o.push_str(&format!(
+        "{ind}                            width: parent.width; height: 1; color: root.colBorder\n"
+    ));
     o.push_str(&format!("{ind}                            visible: {popup}.recentHistory.length > 0 && backend.walletAccounts.length > 0\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     // WALLET section
     o.push_str(&format!("{ind}                        Text {{\n"));
-    o.push_str(&format!("{ind}                            text: \"WALLET\"\n"));
-    o.push_str(&format!("{ind}                            visible: backend.walletAccounts.length > 0\n"));
+    o.push_str(&format!(
+        "{ind}                            text: \"WALLET\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            visible: backend.walletAccounts.length > 0\n"
+    ));
     o.push_str(&format!("{ind}                            color: root.colMuted; font.pixelSize: 10; font.bold: true\n"));
     o.push_str(&format!("{ind}                            leftPadding: 8; topPadding: 2; bottomPadding: 2; width: parent.width\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     // WALLET items — plain Rectangle+MouseArea avoids system styling
     o.push_str(&format!("{ind}                        Repeater {{\n"));
-    o.push_str(&format!("{ind}                            model: backend.walletAccounts\n"));
-    o.push_str(&format!("{ind}                            delegate: Rectangle {{\n"));
-    o.push_str(&format!("{ind}                                width: parent.width; height: 34\n"));
+    o.push_str(&format!(
+        "{ind}                            model: backend.walletAccounts\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            delegate: Rectangle {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                width: parent.width; height: 34\n"
+    ));
     o.push_str(&format!("{ind}                                color: _ma.containsMouse ? root.colSurface : \"transparent\"\n"));
     o.push_str(&format!("{ind}                                Text {{\n"));
-    o.push_str(&format!("{ind}                                    anchors.verticalCenter: parent.verticalCenter\n"));
-    o.push_str(&format!("{ind}                                    x: 8; width: parent.width - 8\n"));
+    o.push_str(&format!(
+        "{ind}                                    anchors.verticalCenter: parent.verticalCenter\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                    x: 8; width: parent.width - 8\n"
+    ));
     o.push_str(&format!("{ind}                                    text: modelData.id + (modelData.label ? \" <b>[\" + modelData.label + \"]</b>\" : \"\")\n"));
-    o.push_str(&format!("{ind}                                    textFormat: Text.StyledText\n"));
+    o.push_str(&format!(
+        "{ind}                                    textFormat: Text.StyledText\n"
+    ));
     o.push_str(&format!("{ind}                                    color: root.colText; elide: Text.ElideMiddle; font.pixelSize: 13\n"));
     o.push_str(&format!("{ind}                                }}\n"));
-    o.push_str(&format!("{ind}                                MouseArea {{\n"));
-    o.push_str(&format!("{ind}                                    id: _ma; anchors.fill: parent\n"));
+    o.push_str(&format!(
+        "{ind}                                MouseArea {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                    id: _ma; anchors.fill: parent\n"
+    ));
     o.push_str(&format!("{ind}                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor\n"));
     o.push_str(&format!("{ind}                                    onClicked: {{ {id}.text = modelData.id; backend.saveHistory(\"{hist_key}\", modelData.id); {popup}.close() }}\n"));
     o.push_str(&format!("{ind}                                }}\n"));
@@ -1432,7 +1632,9 @@ fn qml_account_picker(o: &mut String, id: &str, hist_key: &str, ind: &str) {
     // Empty state
     o.push_str(&format!("{ind}                        Item {{\n"));
     o.push_str(&format!("{ind}                            visible: backend.walletAccounts.length === 0 && {popup}.recentHistory.length === 0\n"));
-    o.push_str(&format!("{ind}                            height: 36; width: parent.width\n"));
+    o.push_str(&format!(
+        "{ind}                            height: 36; width: parent.width\n"
+    ));
     o.push_str(&format!("{ind}                            Text {{ anchors.centerIn: parent; text: \"No accounts or history yet.\"; color: root.colMuted; font.pixelSize: 11 }}\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                    }}\n")); // Column
@@ -1443,7 +1645,12 @@ fn qml_account_picker(o: &mut String, id: &str, hist_key: &str, ind: &str) {
 /// Text field with a "▾" button that opens a RECENT-only history popup.
 /// Used for non-account arg fields (amounts, strings, etc.).
 fn qml_textfield_with_history(
-    o: &mut String, id: &str, ty: &IdlType, hist_key: &str, is_opt: bool, ind: &str,
+    o: &mut String,
+    id: &str,
+    ty: &IdlType,
+    hist_key: &str,
+    is_opt: bool,
+    ind: &str,
 ) {
     let placeholder = type_placeholder(ty);
     let val = validator_str(ty);
@@ -1455,14 +1662,22 @@ fn qml_textfield_with_history(
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}                Layout.rightMargin: 24\n"));
     if is_opt {
-        o.push_str(&format!("{ind}                enabled: {id}_enabled.checked\n"));
-        o.push_str(&format!("{ind}                opacity: enabled ? 1.0 : 0.4\n"));
+        o.push_str(&format!(
+            "{ind}                enabled: {id}_enabled.checked\n"
+        ));
+        o.push_str(&format!(
+            "{ind}                opacity: enabled ? 1.0 : 0.4\n"
+        ));
     }
     o.push_str(&format!("{ind}                TextField {{\n"));
     o.push_str(&format!("{ind}                    id: {id}\n"));
-    o.push_str(&format!("{ind}                    Layout.fillWidth: true\n"));
+    o.push_str(&format!(
+        "{ind}                    Layout.fillWidth: true\n"
+    ));
     if !placeholder.is_empty() {
-        o.push_str(&format!("{ind}                    placeholderText: \"{placeholder}\"\n"));
+        o.push_str(&format!(
+            "{ind}                    placeholderText: \"{placeholder}\"\n"
+        ));
     }
     if let Some(v) = val {
         o.push_str(&format!("{ind}                    validator: {v}\n"));
@@ -1471,62 +1686,106 @@ fn qml_textfield_with_history(
         o.push_str(&format!("{ind}                    inputMethodHints: {h}\n"));
     }
     o.push_str(&format!("{ind}                    color: root.colText\n"));
-    o.push_str(&format!("{ind}                    placeholderTextColor: root.colMuted\n"));
-    o.push_str(&format!("{ind}                    background: Rectangle {{\n"));
-    o.push_str(&format!("{ind}                        color: root.colSurface\n"));
-    o.push_str(&format!("{ind}                        border.color: root.colBorder\n"));
-    o.push_str(&format!("{ind}                        radius: root.radius / 2\n"));
+    o.push_str(&format!(
+        "{ind}                    placeholderTextColor: root.colMuted\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    background: Rectangle {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        color: root.colSurface\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        border.color: root.colBorder\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        radius: root.radius / 2\n"
+    ));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    onEditingFinished: if (text.trim() !== \"\") backend.saveHistory(\"{hist_key}\", text.trim())\n"));
     o.push_str(&format!("{ind}                }}\n"));
     // Drop-down button
     o.push_str(&format!("{ind}                Button {{\n"));
     o.push_str(&format!("{ind}                    implicitWidth: 28\n"));
-    o.push_str(&format!("{ind}                    implicitHeight: {id}.implicitHeight\n"));
+    o.push_str(&format!(
+        "{ind}                    implicitHeight: {id}.implicitHeight\n"
+    ));
     o.push_str(&format!("{ind}                    text: \"\\u25be\"\n")); // ▾
     o.push_str(&format!("{ind}                    background: Rectangle {{ color: root.colSurface; border.color: root.colBorder; radius: root.radius / 2 }}\n"));
     o.push_str(&format!("{ind}                    contentItem: Text {{ text: parent.text; color: root.colMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }}\n"));
-    o.push_str(&format!("{ind}                    onClicked: {popup}.open()\n"));
+    o.push_str(&format!(
+        "{ind}                    onClicked: {popup}.open()\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     // Popup — padding:0 so Column.width === popup.width
     o.push_str(&format!("{ind}                Popup {{\n"));
     o.push_str(&format!("{ind}                    id: {popup}\n"));
-    o.push_str(&format!("{ind}                    y: parent.height; x: 0\n"));
+    o.push_str(&format!(
+        "{ind}                    y: parent.height; x: 0\n"
+    ));
     o.push_str(&format!("{ind}                    width: parent.width\n"));
     o.push_str(&format!("{ind}                    padding: 0\n"));
-    o.push_str(&format!("{ind}                    property var recentHistory: []\n"));
+    o.push_str(&format!(
+        "{ind}                    property var recentHistory: []\n"
+    ));
     o.push_str(&format!("{ind}                    onAboutToShow: recentHistory = backend.fieldHistory(\"{hist_key}\")\n"));
     o.push_str(&format!("{ind}                    background: Rectangle {{ color: root.colSidebar; border.color: root.colBorder; radius: root.radius / 2 }}\n"));
     o.push_str(&format!("{ind}                    Column {{\n"));
-    o.push_str(&format!("{ind}                        width: parent.width\n"));
+    o.push_str(&format!(
+        "{ind}                        width: parent.width\n"
+    ));
     o.push_str(&format!("{ind}                        spacing: 0\n"));
-    o.push_str(&format!("{ind}                        topPadding: 4; bottomPadding: 4\n"));
+    o.push_str(&format!(
+        "{ind}                        topPadding: 4; bottomPadding: 4\n"
+    ));
     o.push_str(&format!("{ind}                        Text {{\n"));
-    o.push_str(&format!("{ind}                            text: \"RECENT\"\n"));
-    o.push_str(&format!("{ind}                            visible: {popup}.recentHistory.length > 0\n"));
+    o.push_str(&format!(
+        "{ind}                            text: \"RECENT\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            visible: {popup}.recentHistory.length > 0\n"
+    ));
     o.push_str(&format!("{ind}                            color: root.colMuted; font.pixelSize: 10; font.bold: true\n"));
     o.push_str(&format!("{ind}                            leftPadding: 8; topPadding: 2; bottomPadding: 2; width: parent.width\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                        Repeater {{\n"));
-    o.push_str(&format!("{ind}                            model: {popup}.recentHistory\n"));
-    o.push_str(&format!("{ind}                            delegate: Rectangle {{\n"));
-    o.push_str(&format!("{ind}                                width: parent.width; height: 34\n"));
+    o.push_str(&format!(
+        "{ind}                            model: {popup}.recentHistory\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            delegate: Rectangle {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                width: parent.width; height: 34\n"
+    ));
     o.push_str(&format!("{ind}                                color: _ma.containsMouse ? root.colSurface : \"transparent\"\n"));
     o.push_str(&format!("{ind}                                Text {{\n"));
-    o.push_str(&format!("{ind}                                    anchors.verticalCenter: parent.verticalCenter\n"));
-    o.push_str(&format!("{ind}                                    x: 8; width: parent.width - 8\n"));
+    o.push_str(&format!(
+        "{ind}                                    anchors.verticalCenter: parent.verticalCenter\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                    x: 8; width: parent.width - 8\n"
+    ));
     o.push_str(&format!("{ind}                                    text: modelData; color: root.colText; elide: Text.ElideMiddle; font.pixelSize: 13\n"));
     o.push_str(&format!("{ind}                                }}\n"));
-    o.push_str(&format!("{ind}                                MouseArea {{\n"));
-    o.push_str(&format!("{ind}                                    id: _ma; anchors.fill: parent\n"));
+    o.push_str(&format!(
+        "{ind}                                MouseArea {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                    id: _ma; anchors.fill: parent\n"
+    ));
     o.push_str(&format!("{ind}                                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor\n"));
     o.push_str(&format!("{ind}                                    onClicked: {{ {id}.text = modelData; {popup}.close() }}\n"));
     o.push_str(&format!("{ind}                                }}\n"));
     o.push_str(&format!("{ind}                            }}\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                        Item {{\n"));
-    o.push_str(&format!("{ind}                            visible: {popup}.recentHistory.length === 0\n"));
-    o.push_str(&format!("{ind}                            height: 36; width: parent.width\n"));
+    o.push_str(&format!(
+        "{ind}                            visible: {popup}.recentHistory.length === 0\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            height: 36; width: parent.width\n"
+    ));
     o.push_str(&format!("{ind}                            Text {{ anchors.centerIn: parent; text: \"No recent values.\"; color: root.colMuted; font.pixelSize: 11 }}\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                    }}\n")); // Column
@@ -1538,14 +1797,26 @@ fn qml_textarea_page(o: &mut String, id: &str, placeholder: &str, ind: &str) {
     o.push_str(&format!("{ind}            TextArea {{\n"));
     o.push_str(&format!("{ind}                id: {id}\n"));
     o.push_str(&format!("{ind}                Layout.fillWidth: true\n"));
-    o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.rightMargin: 24\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.leftMargin: 24; Layout.rightMargin: 24\n"
+    ));
     o.push_str(&format!("{ind}                implicitHeight: 72\n"));
-    o.push_str(&format!("{ind}                placeholderText: \"{placeholder} (one per line)\"\n"));
-    o.push_str(&format!("{ind}                color: root.colText; wrapMode: TextArea.Wrap\n"));
+    o.push_str(&format!(
+        "{ind}                placeholderText: \"{placeholder} (one per line)\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                color: root.colText; wrapMode: TextArea.Wrap\n"
+    ));
     o.push_str(&format!("{ind}                background: Rectangle {{\n"));
-    o.push_str(&format!("{ind}                    color: root.colSurface\n"));
-    o.push_str(&format!("{ind}                    border.color: root.colBorder\n"));
-    o.push_str(&format!("{ind}                    radius: root.radius / 2\n"));
+    o.push_str(&format!(
+        "{ind}                    color: root.colSurface\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    border.color: root.colBorder\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    radius: root.radius / 2\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 }
@@ -1563,8 +1834,12 @@ fn qml_instruction_page(o: &mut String, ix: &IdlInstruction, idl: &SpelIdl) {
     o.push_str(&format!("{ind}        anchors.fill: parent; clip: true\n"));
     o.push_str(&format!("{ind}        contentWidth: availableWidth\n\n"));
     o.push_str(&format!("{ind}        ColumnLayout {{\n"));
-    o.push_str(&format!("{ind}            width: {page_id}.width; spacing: 12\n\n"));
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"));
+    o.push_str(&format!(
+        "{ind}            width: {page_id}.width; spacing: 12\n\n"
+    ));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"
+    ));
 
     // Title
     o.push_str(&format!("{ind}            Text {{\n"));
@@ -1594,7 +1869,9 @@ fn qml_instruction_page(o: &mut String, ix: &IdlInstruction, idl: &SpelIdl) {
                 o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
                 o.push_str(&format!("{ind}                Layout.rightMargin: 24\n"));
                 o.push_str(&format!("{ind}                Layout.fillWidth: true\n"));
-                o.push_str(&format!("{ind}                CheckBox {{ id: {field_id}; checked: false }}\n"));
+                o.push_str(&format!(
+                    "{ind}                CheckBox {{ id: {field_id}; checked: false }}\n"
+                ));
                 o.push_str(&format!("{ind}                Text {{ text: \"{}\"; color: root.colText; font.pixelSize: 13 }}\n", p.qt_name));
                 o.push_str(&format!("{ind}            }}\n\n"));
             }
@@ -1642,26 +1919,44 @@ fn qml_instruction_page(o: &mut String, ix: &IdlInstruction, idl: &SpelIdl) {
         .join(", ");
 
     o.push_str(&format!("{ind}            Button {{\n"));
-    o.push_str(&format!("{ind}                text: backend.busy ? \"\\u2026\" : \"{title}\"\n"));
+    o.push_str(&format!(
+        "{ind}                text: backend.busy ? \"\\u2026\" : \"{title}\"\n"
+    ));
     o.push_str(&format!("{ind}                enabled: !backend.busy\n"));
-    o.push_str(&format!("{ind}                Layout.rightMargin: 24; Layout.alignment: Qt.AlignRight\n"));
-    o.push_str(&format!("{ind}                onClicked: backend.{method}({call_args})\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.rightMargin: 24; Layout.alignment: Qt.AlignRight\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                onClicked: backend.{method}({call_args})\n"
+    ));
     o.push_str(&format!("{ind}                background: Rectangle {{\n"));
     o.push_str(&format!("{ind}                    color: parent.down ? Qt.darker(root.colPrimary, 1.2) : root.colPrimary\n"));
-    o.push_str(&format!("{ind}                    radius: root.radius / 2\n"));
-    o.push_str(&format!("{ind}                    opacity: parent.enabled ? 1.0 : 0.5\n"));
+    o.push_str(&format!(
+        "{ind}                    radius: root.radius / 2\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    opacity: parent.enabled ? 1.0 : 0.5\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}                contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                    text: parent.text; color: root.colText\n"));
-    o.push_str(&format!("{ind}                    horizontalAlignment: Text.AlignHCenter\n"));
-    o.push_str(&format!("{ind}                    verticalAlignment: Text.AlignVCenter\n"));
+    o.push_str(&format!(
+        "{ind}                    text: parent.text; color: root.colText\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    horizontalAlignment: Text.AlignHCenter\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    verticalAlignment: Text.AlignVCenter\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"
+    ));
     o.push_str(&format!("{ind}        }}\n")); // ColumnLayout
-    o.push_str(&format!("{ind}    }}\n"));     // ScrollView
-    o.push_str(&format!("{ind}}}\n\n"));       // Item
+    o.push_str(&format!("{ind}    }}\n")); // ScrollView
+    o.push_str(&format!("{ind}}}\n\n")); // Item
 }
 
 fn qml_fetch_page(o: &mut String, f: &FetchAccount) {
@@ -1674,7 +1969,9 @@ fn qml_fetch_page(o: &mut String, f: &FetchAccount) {
     // Fetch pages use colSurface so they're visually distinct from instruction pages.
     o.push_str(&format!("{ind}Item {{\n"));
     o.push_str(&format!("{ind}    id: {page_id}\n"));
-    o.push_str(&format!("{ind}    Rectangle {{ anchors.fill: parent; color: root.colSurface }}\n"));
+    o.push_str(&format!(
+        "{ind}    Rectangle {{ anchors.fill: parent; color: root.colSurface }}\n"
+    ));
 
     let seed_call = f
         .seed_params
@@ -1704,29 +2001,49 @@ fn qml_fetch_page(o: &mut String, f: &FetchAccount) {
     o.push_str(&format!("{ind}        anchors.fill: parent; clip: true\n"));
     o.push_str(&format!("{ind}        contentWidth: availableWidth\n\n"));
     o.push_str(&format!("{ind}        ColumnLayout {{\n"));
-    o.push_str(&format!("{ind}            width: {page_id}.width; spacing: 12\n\n"));
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"));
+    o.push_str(&format!(
+        "{ind}            width: {page_id}.width; spacing: 12\n\n"
+    ));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"
+    ));
 
     // Title row with refresh button
     o.push_str(&format!("{ind}            RowLayout {{\n"));
     o.push_str(&format!("{ind}                Layout.fillWidth: true\n"));
-    o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.rightMargin: 24\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.leftMargin: 24; Layout.rightMargin: 24\n"
+    ));
     o.push_str(&format!("{ind}                Text {{\n"));
     o.push_str(&format!("{ind}                    text: \"{title}\"\n"));
     o.push_str(&format!("{ind}                    color: root.colText\n"));
-    o.push_str(&format!("{ind}                    font.pixelSize: 18; font.bold: true\n"));
-    o.push_str(&format!("{ind}                    Layout.fillWidth: true\n"));
+    o.push_str(&format!(
+        "{ind}                    font.pixelSize: 18; font.bold: true\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    Layout.fillWidth: true\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}                Button {{\n"));
     o.push_str(&format!("{ind}                    text: \"\\u21ba\"\n"));
-    o.push_str(&format!("{ind}                    onClicked: backend.{fetch_method}({seed_call})\n"));
-    o.push_str(&format!("{ind}                    background: Rectangle {{\n"));
+    o.push_str(&format!(
+        "{ind}                    onClicked: backend.{fetch_method}({seed_call})\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    background: Rectangle {{\n"
+    ));
     o.push_str(&format!("{ind}                        color: root.colSurface; border.color: root.colBorder; radius: root.radius / 2\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                        text: parent.text; color: root.colMuted\n"));
-    o.push_str(&format!("{ind}                        horizontalAlignment: Text.AlignHCenter\n"));
-    o.push_str(&format!("{ind}                        verticalAlignment: Text.AlignVCenter\n"));
+    o.push_str(&format!(
+        "{ind}                        text: parent.text; color: root.colMuted\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        horizontalAlignment: Text.AlignHCenter\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        verticalAlignment: Text.AlignVCenter\n"
+    ));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                }}\n")); // Button
     o.push_str(&format!("{ind}            }}\n\n")); // RowLayout
@@ -1744,66 +2061,114 @@ fn qml_fetch_page(o: &mut String, f: &FetchAccount) {
 
     // Key-value display with per-row copy button
     o.push_str(&format!("{ind}            Repeater {{\n"));
-    o.push_str(&format!("{ind}                model: Object.keys(backend.{prop})\n"));
+    o.push_str(&format!(
+        "{ind}                model: Object.keys(backend.{prop})\n"
+    ));
     o.push_str(&format!("{ind}                delegate: RowLayout {{\n"));
-    o.push_str(&format!("{ind}                    Layout.fillWidth: true\n"));
+    o.push_str(&format!(
+        "{ind}                    Layout.fillWidth: true\n"
+    ));
     o.push_str(&format!("{ind}                    Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}                    Layout.rightMargin: 8\n"));
     o.push_str(&format!("{ind}                    Text {{ text: modelData + \":\"; color: root.colMuted; font.pixelSize: 12; Layout.preferredWidth: 140 }}\n"));
     o.push_str(&format!("{ind}                    Text {{\n"));
-    o.push_str(&format!("{ind}                        property var _v: backend.{prop}[modelData]\n"));
-    o.push_str(&format!("{ind}                        text: Array.isArray(_v) ? _v.join(\"\\n\") : (_v ?? \"\")\n"));
-    o.push_str(&format!("{ind}                        color: root.colText; font.pixelSize: 12\n"));
-    o.push_str(&format!("{ind}                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere\n"));
-    o.push_str(&format!("{ind}                        Layout.fillWidth: true\n"));
+    o.push_str(&format!(
+        "{ind}                        property var _v: backend.{prop}[modelData]\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        text: Array.isArray(_v) ? _v.join(\"\\n\") : (_v ?? \"\")\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        color: root.colText; font.pixelSize: 12\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        Layout.fillWidth: true\n"
+    ));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    Button {{\n"));
-    o.push_str(&format!("{ind}                        implicitWidth: 28; implicitHeight: 28\n"));
-    o.push_str(&format!("{ind}                        property var _v: backend.{prop}[modelData]\n"));
-    o.push_str(&format!("{ind}                        property bool _copied: false\n"));
+    o.push_str(&format!(
+        "{ind}                        implicitWidth: 28; implicitHeight: 28\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        property var _v: backend.{prop}[modelData]\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        property bool _copied: false\n"
+    ));
     o.push_str(&format!("{ind}                        onClicked: {{ clipHelper.copyText(Array.isArray(_v) ? _v.join(\"\\n\") : (_v ?? \"\")); _copied = true; _copyReset.restart() }}\n"));
     o.push_str(&format!("{ind}                        Timer {{ id: _copyReset; interval: 1500; onTriggered: parent._copied = false }}\n"));
-    o.push_str(&format!("{ind}                        background: Item {{}}\n"));
-    o.push_str(&format!("{ind}                        contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                            text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"));
+    o.push_str(&format!(
+        "{ind}                        background: Item {{}}\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        contentItem: Text {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"
+    ));
     o.push_str(&format!("{ind}                            color: parent._copied ? root.colSuccess : root.colMuted\n"));
-    o.push_str(&format!("{ind}                            font.pixelSize: 14\n"));
-    o.push_str(&format!("{ind}                            horizontalAlignment: Text.AlignHCenter\n"));
-    o.push_str(&format!("{ind}                            verticalAlignment: Text.AlignVCenter\n"));
+    o.push_str(&format!(
+        "{ind}                            font.pixelSize: 14\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            horizontalAlignment: Text.AlignHCenter\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            verticalAlignment: Text.AlignVCenter\n"
+    ));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                    }}\n")); // Button
     o.push_str(&format!("{ind}                }}\n")); // delegate
     o.push_str(&format!("{ind}            }}\n\n")); // Repeater
 
     o.push_str(&format!("{ind}            Text {{\n"));
-    o.push_str(&format!("{ind}                visible: Object.keys(backend.{prop}).length === 0\n"));
-    o.push_str(&format!("{ind}                text: \"No data — press \\u21ba to fetch.\"\n"));
-    o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 12\n"));
+    o.push_str(&format!(
+        "{ind}                visible: Object.keys(backend.{prop}).length === 0\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                text: \"No data — press \\u21ba to fetch.\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                color: root.colMuted; font.pixelSize: 12\n"
+    ));
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"
+    ));
     o.push_str(&format!("{ind}        }}\n")); // ColumnLayout
-    o.push_str(&format!("{ind}    }}\n"));     // ScrollView
-    o.push_str(&format!("{ind}}}\n\n"));       // Item
+    o.push_str(&format!("{ind}    }}\n")); // ScrollView
+    o.push_str(&format!("{ind}}}\n\n")); // Item
 }
 
 fn qml_wallet_page(o: &mut String) {
     let ind = "            ";
     o.push_str(&format!("{ind}Item {{\n"));
     o.push_str(&format!("{ind}    id: pageWallet\n"));
-    o.push_str(&format!("{ind}    Rectangle {{ anchors.fill: parent; color: root.colSurface }}\n"));
+    o.push_str(&format!(
+        "{ind}    Rectangle {{ anchors.fill: parent; color: root.colSurface }}\n"
+    ));
     o.push_str(&format!("{ind}    ScrollView {{\n"));
     o.push_str(&format!("{ind}        anchors.fill: parent; clip: true\n"));
     o.push_str(&format!("{ind}        contentWidth: availableWidth\n\n"));
     o.push_str(&format!("{ind}        ColumnLayout {{\n"));
-    o.push_str(&format!("{ind}            width: pageWallet.width; spacing: 12\n\n"));
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"));
+    o.push_str(&format!(
+        "{ind}            width: pageWallet.width; spacing: 12\n\n"
+    ));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"
+    ));
 
     // Title
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                text: \"Wallet\"\n"));
-    o.push_str(&format!("{ind}                color: root.colText; font.pixelSize: 18; font.bold: true\n"));
+    o.push_str(&format!(
+        "{ind}                color: root.colText; font.pixelSize: 18; font.bold: true\n"
+    ));
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 
@@ -1811,30 +2176,46 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                text: \"CONNECTION\"\n"));
     o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1\n"));
-    o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     o.push_str(&format!("{ind}            Button {{\n"));
-    o.push_str(&format!("{ind}                text: \"Check Connection\"\n"));
+    o.push_str(&format!(
+        "{ind}                text: \"Check Connection\"\n"
+    ));
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
-    o.push_str(&format!("{ind}                onClicked: backend.checkConnection()\n"));
+    o.push_str(&format!(
+        "{ind}                onClicked: backend.checkConnection()\n"
+    ));
     o.push_str(&format!("{ind}                background: Rectangle {{\n"));
     o.push_str(&format!("{ind}                    color: parent.down ? Qt.darker(root.colPrimary, 1.2) : root.colPrimary\n"));
-    o.push_str(&format!("{ind}                    radius: root.radius / 2\n"));
+    o.push_str(&format!(
+        "{ind}                    radius: root.radius / 2\n"
+    ));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}                contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                    text: parent.text; color: root.colText\n"));
+    o.push_str(&format!(
+        "{ind}                    text: parent.text; color: root.colText\n"
+    ));
     o.push_str(&format!("{ind}                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     o.push_str(&format!("{ind}            Text {{\n"));
-    o.push_str(&format!("{ind}                text: backend.connectionStatus || \"Not checked\"\n"));
+    o.push_str(&format!(
+        "{ind}                text: backend.connectionStatus || \"Not checked\"\n"
+    ));
     o.push_str(&format!("{ind}                color: backend.connectionStatus.startsWith(\"\\u2713\") ? root.colSuccess\n"));
     o.push_str(&format!("{ind}                     : backend.connectionStatus.startsWith(\"\\u2717\") ? root.colError\n"));
     o.push_str(&format!("{ind}                     : root.colMuted\n"));
-    o.push_str(&format!("{ind}                font.pixelSize: 13; Layout.leftMargin: 24; Layout.fillWidth: true\n"));
-    o.push_str(&format!("{ind}                wrapMode: Text.WrapAtWordBoundaryOrAnywhere\n"));
+    o.push_str(&format!(
+        "{ind}                font.pixelSize: 13; Layout.leftMargin: 24; Layout.fillWidth: true\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                wrapMode: Text.WrapAtWordBoundaryOrAnywhere\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     // Divider
@@ -1844,34 +2225,50 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                text: \"ACCOUNTS\"\n"));
     o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1\n"));
-    o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     // Refresh button
     o.push_str(&format!("{ind}            Button {{\n"));
     o.push_str(&format!("{ind}                text: \"\\u21ba Refresh\"\n")); // ↺ Refresh
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
-    o.push_str(&format!("{ind}                onClicked: backend.listAccounts()\n"));
+    o.push_str(&format!(
+        "{ind}                onClicked: backend.listAccounts()\n"
+    ));
     o.push_str(&format!("{ind}                background: Rectangle {{\n"));
     o.push_str(&format!("{ind}                    color: parent.down ? Qt.darker(root.colPrimary, 1.2) : root.colPrimary; radius: root.radius / 2\n"));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}                contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                    text: parent.text; color: root.colText\n"));
+    o.push_str(&format!(
+        "{ind}                    text: parent.text; color: root.colText\n"
+    ));
     o.push_str(&format!("{ind}                    horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     // Account list
     o.push_str(&format!("{ind}            Text {{\n"));
-    o.push_str(&format!("{ind}                visible: backend.walletAccounts.length === 0\n"));
-    o.push_str(&format!("{ind}                text: \"No accounts — press Refresh.\"\n"));
-    o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"));
+    o.push_str(&format!(
+        "{ind}                visible: backend.walletAccounts.length === 0\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                text: \"No accounts — press Refresh.\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     o.push_str(&format!("{ind}            Repeater {{\n"));
-    o.push_str(&format!("{ind}                model: backend.walletAccounts\n"));
+    o.push_str(&format!(
+        "{ind}                model: backend.walletAccounts\n"
+    ));
     o.push_str(&format!("{ind}                delegate: ColumnLayout {{\n"));
-    o.push_str(&format!("{ind}                    Layout.fillWidth: true; spacing: 2\n"));
+    o.push_str(&format!(
+        "{ind}                    Layout.fillWidth: true; spacing: 2\n"
+    ));
     o.push_str(&format!("{ind}                    RowLayout {{\n"));
     o.push_str(&format!("{ind}                        Layout.fillWidth: true; Layout.leftMargin: 24; Layout.rightMargin: 8\n"));
     // Status badge — color-coded by owner classification
@@ -1881,35 +2278,61 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}                            color: _st === \"uninitialized\" ? Qt.rgba(0.6, 0.6, 0.6, 0.2)\n"));
     o.push_str(&format!("{ind}                                 : _st === \"owned\"         ? Qt.rgba(0.2, 0.8, 0.4, 0.2)\n"));
     o.push_str(&format!("{ind}                                 : _st === \"foreign\"       ? Qt.rgba(0.3, 0.5, 1.0, 0.2)\n"));
-    o.push_str(&format!("{ind}                                 : Qt.rgba(1.0, 0.6, 0.0, 0.2)\n"));
+    o.push_str(&format!(
+        "{ind}                                 : Qt.rgba(1.0, 0.6, 0.0, 0.2)\n"
+    ));
     o.push_str(&format!("{ind}                            Text {{\n"));
-    o.push_str(&format!("{ind}                                id: statusLabel\n"));
-    o.push_str(&format!("{ind}                                anchors.centerIn: parent\n"));
-    o.push_str(&format!("{ind}                                text: parent._st === \"uninitialized\" ? \"free\"\n"));
+    o.push_str(&format!(
+        "{ind}                                id: statusLabel\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                anchors.centerIn: parent\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                text: parent._st === \"uninitialized\" ? \"free\"\n"
+    ));
     o.push_str(&format!("{ind}                                     : parent._st === \"owned\"         ? \"owned\"\n"));
     o.push_str(&format!("{ind}                                     : parent._st === \"foreign\"       ? \"other\"\n"));
-    o.push_str(&format!("{ind}                                     : \"?\"\n"));
+    o.push_str(&format!(
+        "{ind}                                     : \"?\"\n"
+    ));
     o.push_str(&format!("{ind}                                color: parent._st === \"uninitialized\" ? root.colMuted\n"));
     o.push_str(&format!("{ind}                                     : parent._st === \"owned\"         ? root.colSuccess\n"));
     o.push_str(&format!("{ind}                                     : parent._st === \"foreign\"       ? root.colPrimary\n"));
-    o.push_str(&format!("{ind}                                     : \"#f0a030\"\n"));
-    o.push_str(&format!("{ind}                                font.pixelSize: 10; font.bold: true\n"));
+    o.push_str(&format!(
+        "{ind}                                     : \"#f0a030\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                font.pixelSize: 10; font.bold: true\n"
+    ));
     o.push_str(&format!("{ind}                            }}\n"));
     o.push_str(&format!("{ind}                        }}\n")); // Rectangle badge
-    // Label/path
+                                                               // Label/path
     o.push_str(&format!("{ind}                        Text {{\n"));
     o.push_str(&format!("{ind}                            property string _disp: modelData[\"label\"] || modelData[\"path\"] || \"\"\n"));
     o.push_str(&format!("{ind}                            text: _disp\n"));
-    o.push_str(&format!("{ind}                            visible: _disp !== \"\"\n"));
+    o.push_str(&format!(
+        "{ind}                            visible: _disp !== \"\"\n"
+    ));
     o.push_str(&format!("{ind}                            color: modelData[\"label\"] ? root.colPrimary : root.colMuted\n"));
-    o.push_str(&format!("{ind}                            font.pixelSize: 11; Layout.preferredWidth: 80\n"));
-    o.push_str(&format!("{ind}                            elide: Text.ElideRight\n"));
+    o.push_str(&format!(
+        "{ind}                            font.pixelSize: 11; Layout.preferredWidth: 80\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            elide: Text.ElideRight\n"
+    ));
     o.push_str(&format!("{ind}                        }}\n"));
     // Account ID — click to populate inspect field
     o.push_str(&format!("{ind}                        Text {{\n"));
-    o.push_str(&format!("{ind}                            text: modelData[\"id\"] || \"\"\n"));
-    o.push_str(&format!("{ind}                            color: root.colText; font.pixelSize: 12\n"));
-    o.push_str(&format!("{ind}                            elide: Text.ElideMiddle; Layout.fillWidth: true\n"));
+    o.push_str(&format!(
+        "{ind}                            text: modelData[\"id\"] || \"\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            color: root.colText; font.pixelSize: 12\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            elide: Text.ElideMiddle; Layout.fillWidth: true\n"
+    ));
     o.push_str(&format!("{ind}                            MouseArea {{\n"));
     o.push_str(&format!("{ind}                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor\n"));
     o.push_str(&format!("{ind}                                onClicked: walletInspectId.text = modelData[\"id\"] || \"\"\n"));
@@ -1917,28 +2340,50 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}                        }}\n"));
     // Copy button
     o.push_str(&format!("{ind}                        Button {{\n"));
-    o.push_str(&format!("{ind}                            implicitWidth: 28; implicitHeight: 28\n"));
-    o.push_str(&format!("{ind}                            property bool _copied: false\n"));
+    o.push_str(&format!(
+        "{ind}                            implicitWidth: 28; implicitHeight: 28\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            property bool _copied: false\n"
+    ));
     o.push_str(&format!("{ind}                            onClicked: {{ clipHelper.copyText(modelData[\"id\"] || \"\"); _copied = true; _copyReset.restart() }}\n"));
     o.push_str(&format!("{ind}                            Timer {{ id: _copyReset; interval: 1500; onTriggered: parent._copied = false }}\n"));
-    o.push_str(&format!("{ind}                            background: Item {{}}\n"));
-    o.push_str(&format!("{ind}                            contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                                text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"));
+    o.push_str(&format!(
+        "{ind}                            background: Item {{}}\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            contentItem: Text {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                                text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"
+    ));
     o.push_str(&format!("{ind}                                color: parent._copied ? root.colSuccess : root.colMuted\n"));
-    o.push_str(&format!("{ind}                                font.pixelSize: 14\n"));
+    o.push_str(&format!(
+        "{ind}                                font.pixelSize: 14\n"
+    ));
     o.push_str(&format!("{ind}                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                            }}\n"));
     o.push_str(&format!("{ind}                        }}\n")); // copy Button
-    // Decode button — only for program-owned accounts
+                                                               // Decode button — only for program-owned accounts
     o.push_str(&format!("{ind}                        Button {{\n"));
-    o.push_str(&format!("{ind}                            visible: (modelData[\"status\"] || \"\") === \"owned\"\n"));
-    o.push_str(&format!("{ind}                            implicitHeight: 22; implicitWidth: 52\n"));
+    o.push_str(&format!(
+        "{ind}                            visible: (modelData[\"status\"] || \"\") === \"owned\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            implicitHeight: 22; implicitWidth: 52\n"
+    ));
     o.push_str(&format!("{ind}                            onClicked: backend.decodeAccount(modelData[\"id\"] || \"\")\n"));
-    o.push_str(&format!("{ind}                            background: Rectangle {{\n"));
+    o.push_str(&format!(
+        "{ind}                            background: Rectangle {{\n"
+    ));
     o.push_str(&format!("{ind}                                color: parent.down ? Qt.darker(root.colSuccess, 1.3) : Qt.rgba(0.2, 0.8, 0.4, 0.25)\n"));
-    o.push_str(&format!("{ind}                                radius: root.radius / 2\n"));
+    o.push_str(&format!(
+        "{ind}                                radius: root.radius / 2\n"
+    ));
     o.push_str(&format!("{ind}                            }}\n"));
-    o.push_str(&format!("{ind}                            contentItem: Text {{\n"));
+    o.push_str(&format!(
+        "{ind}                            contentItem: Text {{\n"
+    ));
     o.push_str(&format!("{ind}                                text: \"Decode\"; color: root.colSuccess; font.pixelSize: 11\n"));
     o.push_str(&format!("{ind}                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                            }}\n"));
@@ -1954,28 +2399,44 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                text: \"NEW ACCOUNT\"\n"));
     o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1\n"));
-    o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.topMargin: 4\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.leftMargin: 24; Layout.topMargin: 4\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     o.push_str(&format!("{ind}            RowLayout {{\n"));
     o.push_str(&format!("{ind}                Layout.fillWidth: true; Layout.leftMargin: 24; Layout.rightMargin: 24\n"));
     o.push_str(&format!("{ind}                TextField {{\n"));
     o.push_str(&format!("{ind}                    id: walletNewLabel\n"));
-    o.push_str(&format!("{ind}                    Layout.fillWidth: true\n"));
-    o.push_str(&format!("{ind}                    placeholderText: \"Label (optional)\"\n"));
-    o.push_str(&format!("{ind}                    color: root.colText; placeholderTextColor: root.colMuted\n"));
-    o.push_str(&format!("{ind}                    background: Rectangle {{\n"));
+    o.push_str(&format!(
+        "{ind}                    Layout.fillWidth: true\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    placeholderText: \"Label (optional)\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    color: root.colText; placeholderTextColor: root.colMuted\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    background: Rectangle {{\n"
+    ));
     o.push_str(&format!("{ind}                        color: root.colBg; border.color: root.colBorder; radius: root.radius / 2\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}                Button {{\n"));
     o.push_str(&format!("{ind}                    text: \"+ Create\"\n"));
-    o.push_str(&format!("{ind}                    onClicked: backend.createAccount(walletNewLabel.text)\n"));
-    o.push_str(&format!("{ind}                    background: Rectangle {{\n"));
+    o.push_str(&format!(
+        "{ind}                    onClicked: backend.createAccount(walletNewLabel.text)\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    background: Rectangle {{\n"
+    ));
     o.push_str(&format!("{ind}                        color: parent.down ? Qt.darker(root.colPrimary, 1.2) : root.colPrimary; radius: root.radius / 2\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                        text: parent.text; color: root.colText\n"));
+    o.push_str(&format!(
+        "{ind}                        text: parent.text; color: root.colText\n"
+    ));
     o.push_str(&format!("{ind}                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                }}\n"));
@@ -1988,7 +2449,9 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                text: \"INSPECT ACCOUNT\"\n"));
     o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1\n"));
-    o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     // Account ID input + Inspect button
@@ -1996,23 +2459,41 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}                Layout.fillWidth: true; Layout.leftMargin: 24; Layout.rightMargin: 24\n"));
     o.push_str(&format!("{ind}                TextField {{\n"));
     o.push_str(&format!("{ind}                    id: walletInspectId\n"));
-    o.push_str(&format!("{ind}                    Layout.fillWidth: true\n"));
-    o.push_str(&format!("{ind}                    placeholderText: \"Account ID (base58 or 0x\\u2026 hex)\"\n"));
-    o.push_str(&format!("{ind}                    color: root.colText; placeholderTextColor: root.colMuted\n"));
-    o.push_str(&format!("{ind}                    background: Rectangle {{\n"));
+    o.push_str(&format!(
+        "{ind}                    Layout.fillWidth: true\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    placeholderText: \"Account ID (base58 or 0x\\u2026 hex)\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    color: root.colText; placeholderTextColor: root.colMuted\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    background: Rectangle {{\n"
+    ));
     o.push_str(&format!("{ind}                        color: root.colBg; border.color: root.colBorder; radius: root.radius / 2\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                }}\n"));
     o.push_str(&format!("{ind}                Button {{\n"));
     o.push_str(&format!("{ind}                    text: \"Inspect\"\n"));
-    o.push_str(&format!("{ind}                    enabled: walletInspectId.text.length > 0\n"));
-    o.push_str(&format!("{ind}                    onClicked: backend.inspectAccount(walletInspectId.text)\n"));
-    o.push_str(&format!("{ind}                    background: Rectangle {{\n"));
+    o.push_str(&format!(
+        "{ind}                    enabled: walletInspectId.text.length > 0\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    onClicked: backend.inspectAccount(walletInspectId.text)\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                    background: Rectangle {{\n"
+    ));
     o.push_str(&format!("{ind}                        color: parent.enabled ? (parent.down ? Qt.darker(root.colPrimary, 1.2) : root.colPrimary) : root.colBorder\n"));
-    o.push_str(&format!("{ind}                        radius: root.radius / 2\n"));
+    o.push_str(&format!(
+        "{ind}                        radius: root.radius / 2\n"
+    ));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                        text: parent.text; color: root.colText\n"));
+    o.push_str(&format!(
+        "{ind}                        text: parent.text; color: root.colText\n"
+    ));
     o.push_str(&format!("{ind}                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                }}\n"));
@@ -2020,32 +2501,58 @@ fn qml_wallet_page(o: &mut String) {
 
     // Account info repeater
     o.push_str(&format!("{ind}            Text {{\n"));
-    o.push_str(&format!("{ind}                visible: Object.keys(backend.walletAccountInfo).length === 0\n"));
-    o.push_str(&format!("{ind}                text: \"Enter an account ID and press Inspect.\"\n"));
-    o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"));
+    o.push_str(&format!(
+        "{ind}                visible: Object.keys(backend.walletAccountInfo).length === 0\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                text: \"Enter an account ID and press Inspect.\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     o.push_str(&format!("{ind}            Repeater {{\n"));
-    o.push_str(&format!("{ind}                model: Object.keys(backend.walletAccountInfo)\n"));
+    o.push_str(&format!(
+        "{ind}                model: Object.keys(backend.walletAccountInfo)\n"
+    ));
     o.push_str(&format!("{ind}                delegate: RowLayout {{\n"));
     o.push_str(&format!("{ind}                    Layout.fillWidth: true; Layout.leftMargin: 24; Layout.rightMargin: 8\n"));
     o.push_str(&format!("{ind}                    Text {{ text: modelData + \":\"; color: root.colMuted; font.pixelSize: 12; Layout.preferredWidth: 140 }}\n"));
     o.push_str(&format!("{ind}                    Text {{\n"));
-    o.push_str(&format!("{ind}                        property var _v: backend.walletAccountInfo[modelData]\n"));
-    o.push_str(&format!("{ind}                        text: _v ?? \"\"; color: root.colText; font.pixelSize: 12\n"));
+    o.push_str(&format!(
+        "{ind}                        property var _v: backend.walletAccountInfo[modelData]\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        text: _v ?? \"\"; color: root.colText; font.pixelSize: 12\n"
+    ));
     o.push_str(&format!("{ind}                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere; Layout.fillWidth: true\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    Button {{\n"));
-    o.push_str(&format!("{ind}                        implicitWidth: 28; implicitHeight: 28\n"));
-    o.push_str(&format!("{ind}                        property var _v: backend.walletAccountInfo[modelData]\n"));
-    o.push_str(&format!("{ind}                        property bool _copied: false\n"));
+    o.push_str(&format!(
+        "{ind}                        implicitWidth: 28; implicitHeight: 28\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        property var _v: backend.walletAccountInfo[modelData]\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        property bool _copied: false\n"
+    ));
     o.push_str(&format!("{ind}                        onClicked: {{ clipHelper.copyText(_v ?? \"\"); _copied = true; _copyReset.restart() }}\n"));
     o.push_str(&format!("{ind}                        Timer {{ id: _copyReset; interval: 1500; onTriggered: parent._copied = false }}\n"));
-    o.push_str(&format!("{ind}                        background: Item {{}}\n"));
-    o.push_str(&format!("{ind}                        contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                            text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"));
+    o.push_str(&format!(
+        "{ind}                        background: Item {{}}\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        contentItem: Text {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"
+    ));
     o.push_str(&format!("{ind}                            color: parent._copied ? root.colSuccess : root.colMuted\n"));
-    o.push_str(&format!("{ind}                            font.pixelSize: 14\n"));
+    o.push_str(&format!(
+        "{ind}                            font.pixelSize: 14\n"
+    ));
     o.push_str(&format!("{ind}                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                    }}\n")); // Button
@@ -2057,27 +2564,39 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                text: \"DECODED DATA\"\n"));
     o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1\n"));
-    o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"));
+    o.push_str(&format!(
+        "{ind}                Layout.leftMargin: 24; Layout.topMargin: 8\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
     // Type name header when decode succeeded
     o.push_str(&format!("{ind}            Text {{\n"));
-    o.push_str(&format!("{ind}                visible: (backend.walletDecodedAccount[\"type\"] || \"\") !== \"\"\n"));
+    o.push_str(&format!(
+        "{ind}                visible: (backend.walletDecodedAccount[\"type\"] || \"\") !== \"\"\n"
+    ));
     o.push_str(&format!("{ind}                text: \"Type: \" + (backend.walletDecodedAccount[\"type\"] || \"\")\n"));
-    o.push_str(&format!("{ind}                color: root.colSuccess; font.pixelSize: 13; font.bold: true\n"));
+    o.push_str(&format!(
+        "{ind}                color: root.colSuccess; font.pixelSize: 13; font.bold: true\n"
+    ));
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
     // Uninitialized notice
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                visible: (backend.walletDecodedAccount[\"status\"] || \"\") === \"uninitialized\"\n"));
-    o.push_str(&format!("{ind}                text: \"Account is uninitialized (no data).\"\n"));
-    o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"));
+    o.push_str(&format!(
+        "{ind}                text: \"Account is uninitialized (no data).\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
     // No matching type
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                property bool _noType: Object.keys(backend.walletDecodedAccount).length > 0\n"));
     o.push_str(&format!("{ind}                    && (backend.walletDecodedAccount[\"type\"] === undefined || backend.walletDecodedAccount[\"type\"] === null || backend.walletDecodedAccount[\"type\"] === \"\")\n"));
     o.push_str(&format!("{ind}                    && (backend.walletDecodedAccount[\"status\"] || \"\") !== \"uninitialized\"\n"));
-    o.push_str(&format!("{ind}                    && (backend.walletDecodedAccount[\"error\"] || \"\") === \"\"\n"));
+    o.push_str(&format!(
+        "{ind}                    && (backend.walletDecodedAccount[\"error\"] || \"\") === \"\"\n"
+    ));
     o.push_str(&format!("{ind}                visible: _noType\n"));
     o.push_str(&format!("{ind}                text: \"No matching IDL type. Raw hex: \" + (backend.walletDecodedAccount[\"raw_hex\"] || \"\")\n"));
     o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 11; font.family: \"monospace\"\n"));
@@ -2086,15 +2605,23 @@ fn qml_wallet_page(o: &mut String) {
     // Error
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                visible: (backend.walletDecodedAccount[\"error\"] || \"\") !== \"\"\n"));
-    o.push_str(&format!("{ind}                text: backend.walletDecodedAccount[\"error\"] || \"\"\n"));
-    o.push_str(&format!("{ind}                color: root.colError; font.pixelSize: 12\n"));
+    o.push_str(&format!(
+        "{ind}                text: backend.walletDecodedAccount[\"error\"] || \"\"\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                color: root.colError; font.pixelSize: 12\n"
+    ));
     o.push_str(&format!("{ind}                wrapMode: Text.WrapAtWordBoundaryOrAnywhere; Layout.fillWidth: true; Layout.leftMargin: 24; Layout.rightMargin: 24\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
     // Empty state hint
     o.push_str(&format!("{ind}            Text {{\n"));
-    o.push_str(&format!("{ind}                visible: Object.keys(backend.walletDecodedAccount).length === 0\n"));
+    o.push_str(&format!(
+        "{ind}                visible: Object.keys(backend.walletDecodedAccount).length === 0\n"
+    ));
     o.push_str(&format!("{ind}                text: \"Click \\\"Decode\\\" on a program-owned account to view its data.\"\n"));
-    o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"));
+    o.push_str(&format!(
+        "{ind}                color: root.colMuted; font.pixelSize: 12; Layout.leftMargin: 24\n"
+    ));
     o.push_str(&format!("{ind}            }}\n\n"));
     // Decoded fields as key-value rows
     o.push_str(&format!("{ind}            Repeater {{\n"));
@@ -2104,31 +2631,47 @@ fn qml_wallet_page(o: &mut String) {
     o.push_str(&format!("{ind}                    Text {{ text: modelData + \":\"; color: root.colMuted; font.pixelSize: 12; Layout.preferredWidth: 140 }}\n"));
     o.push_str(&format!("{ind}                    Text {{\n"));
     o.push_str(&format!("{ind}                        property var _v: backend.walletDecodedAccount[\"fields\"][modelData]\n"));
-    o.push_str(&format!("{ind}                        text: _v !== undefined && _v !== null ? String(_v) : \"\"\n"));
+    o.push_str(&format!(
+        "{ind}                        text: _v !== undefined && _v !== null ? String(_v) : \"\"\n"
+    ));
     o.push_str(&format!("{ind}                        color: root.colText; font.pixelSize: 12; font.family: \"monospace\"\n"));
     o.push_str(&format!("{ind}                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere; Layout.fillWidth: true\n"));
     o.push_str(&format!("{ind}                    }}\n"));
     o.push_str(&format!("{ind}                    Button {{\n"));
-    o.push_str(&format!("{ind}                        implicitWidth: 28; implicitHeight: 28\n"));
+    o.push_str(&format!(
+        "{ind}                        implicitWidth: 28; implicitHeight: 28\n"
+    ));
     o.push_str(&format!("{ind}                        property var _v: backend.walletDecodedAccount[\"fields\"][modelData]\n"));
-    o.push_str(&format!("{ind}                        property bool _copied: false\n"));
+    o.push_str(&format!(
+        "{ind}                        property bool _copied: false\n"
+    ));
     o.push_str(&format!("{ind}                        onClicked: {{ clipHelper.copyText(_v !== undefined ? String(_v) : \"\"); _copied = true; _copyReset.restart() }}\n"));
     o.push_str(&format!("{ind}                        Timer {{ id: _copyReset; interval: 1500; onTriggered: parent._copied = false }}\n"));
-    o.push_str(&format!("{ind}                        background: Item {{}}\n"));
-    o.push_str(&format!("{ind}                        contentItem: Text {{\n"));
-    o.push_str(&format!("{ind}                            text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"));
+    o.push_str(&format!(
+        "{ind}                        background: Item {{}}\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                        contentItem: Text {{\n"
+    ));
+    o.push_str(&format!(
+        "{ind}                            text: parent._copied ? \"\\u2713\" : \"\\u29C9\"\n"
+    ));
     o.push_str(&format!("{ind}                            color: parent._copied ? root.colSuccess : root.colMuted\n"));
-    o.push_str(&format!("{ind}                            font.pixelSize: 14\n"));
+    o.push_str(&format!(
+        "{ind}                            font.pixelSize: 14\n"
+    ));
     o.push_str(&format!("{ind}                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter\n"));
     o.push_str(&format!("{ind}                        }}\n"));
     o.push_str(&format!("{ind}                    }}\n")); // copy button
     o.push_str(&format!("{ind}                }}\n")); // delegate
     o.push_str(&format!("{ind}            }}\n\n")); // Repeater
 
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"
+    ));
     o.push_str(&format!("{ind}        }}\n")); // ColumnLayout
-    o.push_str(&format!("{ind}    }}\n"));     // ScrollView
-    o.push_str(&format!("{ind}}}\n\n"));       // Item
+    o.push_str(&format!("{ind}    }}\n")); // ScrollView
+    o.push_str(&format!("{ind}}}\n\n")); // Item
 }
 
 fn qml_settings_page(o: &mut String) {
@@ -2136,45 +2679,63 @@ fn qml_settings_page(o: &mut String) {
     // Settings page uses colSurface — same visual group as fetch/account pages.
     o.push_str(&format!("{ind}Item {{\n"));
     o.push_str(&format!("{ind}    id: pageSettings\n"));
-    o.push_str(&format!("{ind}    Rectangle {{ anchors.fill: parent; color: root.colSurface }}\n"));
+    o.push_str(&format!(
+        "{ind}    Rectangle {{ anchors.fill: parent; color: root.colSurface }}\n"
+    ));
     o.push_str(&format!("{ind}    ScrollView {{\n"));
     o.push_str(&format!("{ind}        anchors.fill: parent; clip: true\n"));
     o.push_str(&format!("{ind}        contentWidth: availableWidth\n\n"));
     o.push_str(&format!("{ind}        ColumnLayout {{\n"));
-    o.push_str(&format!("{ind}            width: pageSettings.width; spacing: 16\n\n"));
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"));
+    o.push_str(&format!(
+        "{ind}            width: pageSettings.width; spacing: 16\n\n"
+    ));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 24 }}\n\n"
+    ));
     o.push_str(&format!("{ind}            Text {{\n"));
     o.push_str(&format!("{ind}                text: \"Settings\"\n"));
-    o.push_str(&format!("{ind}                color: root.colText; font.pixelSize: 18; font.bold: true\n"));
+    o.push_str(&format!(
+        "{ind}                color: root.colText; font.pixelSize: 18; font.bold: true\n"
+    ));
     o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
     o.push_str(&format!("{ind}            }}\n\n"));
 
     for (label, prop, setter) in [
-        ("Wallet Path",      "walletPath",   "setWalletPath"),
-        ("Sequencer URL",    "sequencerUrl", "setSequencerUrl"),
+        ("Wallet Path", "walletPath", "setWalletPath"),
+        ("Sequencer URL", "sequencerUrl", "setSequencerUrl"),
         ("Program ID (hex)", "programIdHex", "setProgramIdHex"),
     ] {
         o.push_str(&format!("{ind}            Text {{\n"));
         o.push_str(&format!("{ind}                text: \"{label}\"\n"));
-        o.push_str(&format!("{ind}                color: root.colMuted; font.pixelSize: 11\n"));
+        o.push_str(&format!(
+            "{ind}                color: root.colMuted; font.pixelSize: 11\n"
+        ));
         o.push_str(&format!("{ind}                Layout.leftMargin: 24\n"));
         o.push_str(&format!("{ind}            }}\n"));
         o.push_str(&format!("{ind}            TextField {{\n"));
         o.push_str(&format!("{ind}                text: backend.{prop}\n"));
-        o.push_str(&format!("{ind}                onEditingFinished: backend.{setter}(text)\n"));
+        o.push_str(&format!(
+            "{ind}                onEditingFinished: backend.{setter}(text)\n"
+        ));
         o.push_str(&format!("{ind}                Layout.fillWidth: true\n"));
-        o.push_str(&format!("{ind}                Layout.leftMargin: 24; Layout.rightMargin: 24\n"));
-        o.push_str(&format!("{ind}                color: root.colText; placeholderTextColor: root.colMuted\n"));
+        o.push_str(&format!(
+            "{ind}                Layout.leftMargin: 24; Layout.rightMargin: 24\n"
+        ));
+        o.push_str(&format!(
+            "{ind}                color: root.colText; placeholderTextColor: root.colMuted\n"
+        ));
         o.push_str(&format!("{ind}                background: Rectangle {{\n"));
         o.push_str(&format!("{ind}                    color: root.colSurface; border.color: root.colBorder; radius: root.radius / 2\n"));
         o.push_str(&format!("{ind}                }}\n"));
         o.push_str(&format!("{ind}            }}\n\n"));
     }
 
-    o.push_str(&format!("{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"));
+    o.push_str(&format!(
+        "{ind}            Item {{ Layout.fillWidth: true; height: 80 }}\n"
+    ));
     o.push_str(&format!("{ind}        }}\n")); // ColumnLayout
-    o.push_str(&format!("{ind}    }}\n"));     // ScrollView
-    o.push_str(&format!("{ind}}}\n\n"));       // Item
+    o.push_str(&format!("{ind}    }}\n")); // ScrollView
+    o.push_str(&format!("{ind}}}\n\n")); // Item
 }
 
 fn qml_toast(o: &mut String) {
