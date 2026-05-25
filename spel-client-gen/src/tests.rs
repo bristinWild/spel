@@ -1514,3 +1514,45 @@ fn test_rest_account_name_match_prefers_named_arg() {
         "FFI must not derive member_accounts from signers: {ffi}"
     );
 }
+
+#[test]
+fn test_rest_account_name_match_non_accounts_suffixes() {
+    // _list, _set, _keys, _ids and _addrs suffixes are also stripped for name matching.
+    for (acc_name, arg_name) in [
+        ("signers_list", "signers"),
+        ("validator_set", "validators"),
+        ("member_keys", "members"),
+        ("node_ids", "nodes"),
+        ("peer_addrs", "peers"),
+    ] {
+        let idl = format!(
+            r#"{{
+                "version": "0.1.0",
+                "name": "test_prog",
+                "instructions": [{{
+                    "name": "op",
+                    "accounts": [
+                        {{"name": "state", "writable": true, "signer": false, "init": false}},
+                        {{"name": "{acc_name}", "writable": false, "signer": false, "init": false, "rest": true}}
+                    ],
+                    "args": [
+                        {{"name": "unrelated", "type": {{"vec": "[u8; 32]"}}}},
+                        {{"name": "{arg_name}", "type": {{"vec": "[u8; 32]"}}}}
+                    ]
+                }}],
+                "accounts": [], "types": [], "errors": []
+            }}"#
+        );
+        let output = generate_from_idl_json(&idl)
+            .unwrap_or_else(|e| panic!("codegen failed for {acc_name}: {e}"));
+        let ffi = &output.ffi_code;
+        assert!(
+            ffi.contains(&format!("{arg_name}.iter()")),
+            "{acc_name} should derive from {arg_name}: {ffi}"
+        );
+        assert!(
+            !ffi.contains("unrelated.iter()"),
+            "{acc_name} must not fall back to unrelated: {ffi}"
+        );
+    }
+}
