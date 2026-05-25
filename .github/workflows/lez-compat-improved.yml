@@ -146,7 +146,7 @@ jobs:
         if: steps.update-deps.outputs.changed == 'true'
         run: |
           BRANCH="${{ steps.branch.outputs.branch }}"
-          git push -u origin "$BRANCH"
+          git push -u origin "$BRANCH" --force
 
       - name: Generate compatibility report
         if: steps.check-update.outputs.needs_update == 'true'
